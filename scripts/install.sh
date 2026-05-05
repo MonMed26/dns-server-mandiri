@@ -30,7 +30,7 @@ if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
     systemctl disable systemd-resolved
     # Fix /etc/resolv.conf
     rm -f /etc/resolv.conf
-    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    echo "nameserver 1.1.1.1" > /etc/resolv.conf
     echo "  - systemd-resolved stopped and disabled"
 fi
 
