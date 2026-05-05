@@ -4,17 +4,30 @@ import (
 	"os"
 	"time"
 
+	"dns-server-mandiri/internal/clientstats"
+	"dns-server-mandiri/internal/ecs"
+	"dns-server-mandiri/internal/failover"
+	"dns-server-mandiri/internal/filter"
+	"dns-server-mandiri/internal/localrecords"
+	"dns-server-mandiri/internal/persistence"
+
 	"gopkg.in/yaml.v3"
 )
 
 // Config holds all configuration for the DNS server
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Cache    CacheConfig    `yaml:"cache"`
-	Resolver ResolverConfig `yaml:"resolver"`
-	Rate     RateConfig     `yaml:"rate"`
-	Metrics  MetricsConfig  `yaml:"metrics"`
-	Logging  LoggingConfig  `yaml:"logging"`
+	Server       ServerConfig          `yaml:"server"`
+	Cache        CacheConfig           `yaml:"cache"`
+	Resolver     ResolverConfig        `yaml:"resolver"`
+	Rate         RateConfig            `yaml:"rate"`
+	Metrics      MetricsConfig         `yaml:"metrics"`
+	Logging      LoggingConfig         `yaml:"logging"`
+	Filter       filter.Config         `yaml:"filter"`
+	Failover     failover.Config       `yaml:"failover"`
+	Persistence  persistence.Config    `yaml:"persistence"`
+	LocalRecords localrecords.Config   `yaml:"local_records"`
+	ClientStats  ClientStatsConfig     `yaml:"client_stats"`
+	ECS          ecs.Config            `yaml:"ecs"`
 }
 
 type ServerConfig struct {
@@ -25,28 +38,28 @@ type ServerConfig struct {
 }
 
 type CacheConfig struct {
-	MaxSize       int           `yaml:"max_size"`
-	DefaultTTL    time.Duration `yaml:"default_ttl"`
-	MinTTL        time.Duration `yaml:"min_ttl"`
-	MaxTTL        time.Duration `yaml:"max_ttl"`
-	NegativeTTL   time.Duration `yaml:"negative_ttl"`
-	PrefetchRatio float64       `yaml:"prefetch_ratio"`
+	MaxSize         int           `yaml:"max_size"`
+	DefaultTTL      time.Duration `yaml:"default_ttl"`
+	MinTTL          time.Duration `yaml:"min_ttl"`
+	MaxTTL          time.Duration `yaml:"max_ttl"`
+	NegativeTTL     time.Duration `yaml:"negative_ttl"`
+	PrefetchRatio   float64       `yaml:"prefetch_ratio"`
 	CleanupInterval time.Duration `yaml:"cleanup_interval"`
 }
 
 type ResolverConfig struct {
-	MaxDepth       int           `yaml:"max_depth"`
-	MaxCNAMEChain  int           `yaml:"max_cname_chain"`
-	Timeout        time.Duration `yaml:"timeout"`
-	Retries        int           `yaml:"retries"`
-	RootHintsFile  string        `yaml:"root_hints_file"`
-	EnableDNSSEC   bool          `yaml:"enable_dnssec"`
+	MaxDepth      int           `yaml:"max_depth"`
+	MaxCNAMEChain int           `yaml:"max_cname_chain"`
+	Timeout       time.Duration `yaml:"timeout"`
+	Retries       int           `yaml:"retries"`
+	RootHintsFile string        `yaml:"root_hints_file"`
+	EnableDNSSEC  bool          `yaml:"enable_dnssec"`
 }
 
 type RateConfig struct {
-	Enabled       bool          `yaml:"enabled"`
-	RequestsPerSec int          `yaml:"requests_per_sec"`
-	BurstSize     int           `yaml:"burst_size"`
+	Enabled         bool          `yaml:"enabled"`
+	RequestsPerSec  int           `yaml:"requests_per_sec"`
+	BurstSize       int           `yaml:"burst_size"`
 	CleanupInterval time.Duration `yaml:"cleanup_interval"`
 }
 
@@ -57,10 +70,18 @@ type MetricsConfig struct {
 }
 
 type LoggingConfig struct {
-	Level      string `yaml:"level"`
-	File       string `yaml:"file"`
-	QueryLog   bool   `yaml:"query_log"`
+	Level    string `yaml:"level"`
+	File     string `yaml:"file"`
+	QueryLog bool   `yaml:"query_log"`
 }
+
+type ClientStatsConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	MaxClients int  `yaml:"max_clients"`
+}
+
+// Ensure clientstats is used
+var _ = clientstats.New
 
 // DefaultConfig returns a production-ready default configuration
 func DefaultConfig() *Config {
@@ -77,7 +98,7 @@ func DefaultConfig() *Config {
 			MinTTL:          30 * time.Second,
 			MaxTTL:          24 * time.Hour,
 			NegativeTTL:     5 * time.Minute,
-			PrefetchRatio:   0.1, // prefetch when 10% TTL remaining
+			PrefetchRatio:   0.1,
 			CleanupInterval: 1 * time.Minute,
 		},
 		Resolver: ResolverConfig{
@@ -104,6 +125,15 @@ func DefaultConfig() *Config {
 			File:     "",
 			QueryLog: false,
 		},
+		Filter:       filter.DefaultFilterConfig(),
+		Failover:     failover.DefaultFailoverConfig(),
+		Persistence:  persistence.DefaultPersistenceConfig(),
+		LocalRecords: localrecords.DefaultLocalRecordsConfig(),
+		ClientStats: ClientStatsConfig{
+			Enabled:    true,
+			MaxClients: 10000,
+		},
+		ECS: ecs.DefaultECSConfig(),
 	}
 }
 

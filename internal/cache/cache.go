@@ -289,3 +289,55 @@ func (c *Cache) PrefetchCandidates() []struct {
 
 	return candidates
 }
+
+// ExportEntry represents a cache entry for persistence
+type ExportEntry struct {
+	Name      string
+	Qtype     uint16
+	Qclass    uint16
+	MsgBytes  []byte
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// ExportEntries exports all valid cache entries for persistence
+func (c *Cache) ExportEntries() []ExportEntry {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var entries []ExportEntry
+	now := time.Now()
+
+	for _, entry := range c.entries {
+		if entry.IsExpired() || entry.Msg == nil {
+			continue
+		}
+
+		msgBytes, err := entry.Msg.Pack()
+		if err != nil {
+			continue
+		}
+
+		if len(entry.Msg.Question) == 0 {
+			continue
+		}
+
+		q := entry.Msg.Question[0]
+		entries = append(entries, ExportEntry{
+			Name:      q.Name,
+			Qtype:     q.Qtype,
+			Qclass:    q.Qclass,
+			MsgBytes:  msgBytes,
+			ExpiresAt: entry.ExpiresAt,
+			CreatedAt: entry.CreatedAt,
+		})
+
+		// Limit export to prevent huge files
+		if len(entries) >= 100000 {
+			break
+		}
+	}
+
+	_ = now
+	return entries
+}

@@ -9,9 +9,15 @@ import (
 	"time"
 
 	"dns-server-mandiri/internal/cache"
+	"dns-server-mandiri/internal/clientstats"
 	"dns-server-mandiri/internal/config"
 	"dns-server-mandiri/internal/dashboard"
+	"dns-server-mandiri/internal/ecs"
+	"dns-server-mandiri/internal/failover"
+	"dns-server-mandiri/internal/filter"
+	"dns-server-mandiri/internal/localrecords"
 	"dns-server-mandiri/internal/metrics"
+	"dns-server-mandiri/internal/persistence"
 	"dns-server-mandiri/internal/ratelimit"
 	"dns-server-mandiri/internal/resolver"
 
@@ -20,15 +26,21 @@ import (
 
 // Server is the main DNS server
 type Server struct {
-	cfg       *config.Config
-	resolver  *resolver.Resolver
-	cache     *cache.Cache
-	limiter   *ratelimit.Limiter
-	metrics   *metrics.Metrics
-	logger    *slog.Logger
-	udpServer *dns.Server
-	tcpServer *dns.Server
-	dashboard *dashboard.Dashboard
+	cfg          *config.Config
+	resolver     *resolver.Resolver
+	cache        *cache.Cache
+	limiter      *ratelimit.Limiter
+	metrics      *metrics.Metrics
+	filter       *filter.Filter
+	failover     *failover.Failover
+	persistence  *persistence.Persistence
+	localRecords *localrecords.LocalRecords
+	clientStats  *clientstats.Tracker
+	ecs          *ecs.Handler
+	dashboard    *dashboard.Dashboard
+	logger       *slog.Logger
+	udpServer    *dns.Server
+	tcpServer    *dns.Server
 	prefetchStop chan struct{}
 }
 
@@ -64,8 +76,48 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	// Initialize resolver
 	res := resolver.New(dnsCache, cfg.Resolver, logger)
 
+	// Initialize filter
+	dnsFilter := filter.New(cfg.Filter, logger)
+
+	// Initialize failover
+	dnsFailover := failover.New(cfg.Failover, logger)
+
+	// Initialize persistence
+	persist := persistence.New(cfg.Persistence, logger)
+	persist.GetEntriesFunc = func() []persistence.CacheEntry {
+		exported := dnsCache.ExportEntries()
+		entries := make([]persistence.CacheEntry, len(exported))
+		for i, e := range exported {
+			entries[i] = persistence.CacheEntry{
+				Name:      e.Name,
+				Qtype:     e.Qtype,
+				Qclass:    e.Qclass,
+				MsgBytes:  e.MsgBytes,
+				ExpiresAt: e.ExpiresAt,
+				CreatedAt: e.CreatedAt,
+			}
+		}
+		return entries
+	}
+
+	// Initialize local records
+	lr := localrecords.New(cfg.LocalRecords, logger)
+
+	// Initialize client stats
+	var cs *clientstats.Tracker
+	if cfg.ClientStats.Enabled {
+		cs = clientstats.New(cfg.ClientStats.MaxClients)
+	}
+
+	// Initialize ECS
+	ecsHandler := ecs.New(cfg.ECS)
+
 	// Initialize dashboard
 	dash := dashboard.New(m, logger)
+	dash.SetFilter(dnsFilter)
+	dash.SetLocalRecords(lr)
+	dash.SetClientStats(cs)
+	dash.SetFailover(dnsFailover)
 
 	return &Server{
 		cfg:          cfg,
@@ -73,14 +125,31 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 		cache:        dnsCache,
 		limiter:      limiter,
 		metrics:      m,
-		logger:       logger,
+		filter:       dnsFilter,
+		failover:     dnsFailover,
+		persistence:  persist,
+		localRecords: lr,
+		clientStats:  cs,
+		ecs:          ecsHandler,
 		dashboard:    dash,
+		logger:       logger,
 		prefetchStop: make(chan struct{}),
 	}
 }
 
 // Start starts the DNS server on both UDP and TCP
 func (s *Server) Start() error {
+	// Restore cache from disk
+	if s.persistence.IsEnabled() {
+		restored, err := s.persistence.Load(s.cache)
+		if err != nil {
+			s.logger.Warn("failed to restore cache", "error", err)
+		} else if restored > 0 {
+			s.logger.Info("cache restored from disk", "entries", restored)
+		}
+		s.persistence.StartAutoSave()
+	}
+
 	listenAddr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.UDPPort)
 
 	// Setup DNS handler
@@ -102,7 +171,7 @@ func (s *Server) Start() error {
 		Handler: handler,
 	}
 
-	// Start dashboard HTTP server (includes metrics API)
+	// Start dashboard HTTP server
 	if s.cfg.Metrics.Enabled {
 		go func() {
 			err := s.dashboard.Serve(s.cfg.Metrics.ListenAddr, s.cfg.Metrics.Port)
@@ -117,6 +186,16 @@ func (s *Server) Start() error {
 
 	// Start prefetch loop
 	go s.prefetchLoop()
+
+	// Log features status
+	s.logger.Info("features status",
+		"filter", s.filter.IsEnabled(),
+		"failover", s.failover.IsEnabled(),
+		"persistence", s.persistence.IsEnabled(),
+		"local_records", s.localRecords.IsEnabled(),
+		"ecs", s.ecs.IsEnabled(),
+		"client_stats", s.cfg.ClientStats.Enabled,
+	)
 
 	// Start UDP server
 	go func() {
@@ -147,11 +226,17 @@ func (s *Server) Shutdown() {
 	if s.tcpServer != nil {
 		s.tcpServer.Shutdown()
 	}
+	if s.persistence != nil {
+		s.persistence.Stop()
+	}
 	if s.cache != nil {
 		s.cache.Stop()
 	}
 	if s.limiter != nil {
 		s.limiter.Stop()
+	}
+	if s.filter != nil {
+		s.filter.Stop()
 	}
 	if s.metrics != nil {
 		s.metrics.Stop()
@@ -170,13 +255,12 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		protocol = "tcp"
 	}
 
-	// Get client IP for rate limiting
+	// Get client IP
 	clientIP := s.extractClientIP(w.RemoteAddr())
 
 	// Rate limiting
 	if s.limiter != nil && !s.limiter.Allow(clientIP) {
 		s.metrics.RateLimited.Add(1)
-		s.logger.Debug("rate limited", "client", clientIP)
 		resp := new(dns.Msg)
 		resp.SetRcode(r, dns.RcodeRefused)
 		w.WriteMsg(resp)
@@ -203,14 +287,50 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		)
 	}
 
-	// Check if result is from cache (for metrics)
+	// Step 1: Check DNS filter (ad blocking)
+	if s.filter.IsBlocked(q.Name) {
+		resp := s.filter.BlockedResponse(r, s.cfg.Filter.BlockResponse)
+		latency := time.Since(start)
+		s.metrics.RecordQuery(protocol, resp.Rcode, latency)
+		s.metrics.RecordQueryDetail(clientIP, q.Name, dns.TypeToString[q.Qtype], "BLOCKED", protocol, latency, false)
+		if s.clientStats != nil {
+			s.clientStats.RecordQuery(clientIP, q.Name, true, latency)
+		}
+		w.WriteMsg(resp)
+		return
+	}
+
+	// Step 2: Check local records
+	if resp, found := s.localRecords.Lookup(q.Name, q.Qtype); found {
+		resp.SetReply(r)
+		latency := time.Since(start)
+		s.metrics.RecordQuery(protocol, resp.Rcode, latency)
+		s.metrics.RecordQueryDetail(clientIP, q.Name, dns.TypeToString[q.Qtype], "LOCAL", protocol, latency, false)
+		if s.clientStats != nil {
+			s.clientStats.RecordQuery(clientIP, q.Name, false, latency)
+		}
+		w.WriteMsg(resp)
+		return
+	}
+
+	// Step 3: Check cache (for metrics tracking)
 	_, cached, _ := s.cache.Get(q.Name, q.Qtype, q.Qclass)
 
-	// Resolve the query
+	// Step 4: Resolve via recursive resolver
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	resp, err := s.resolver.Resolve(ctx, q.Name, q.Qtype, q.Qclass)
+
+	// Step 5: If recursive fails, try failover
+	if err != nil && s.failover.IsEnabled() {
+		failoverResp, failoverErr := s.failover.Resolve(ctx, q.Name, q.Qtype)
+		if failoverErr == nil && failoverResp != nil {
+			resp = failoverResp
+			err = nil
+			s.logger.Debug("failover resolved", "name", q.Name, "type", dns.TypeToString[q.Qtype])
+		}
+	}
 
 	latency := time.Since(start)
 
@@ -225,6 +345,9 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		resp.SetRcode(r, dns.RcodeServerFailure)
 		s.metrics.RecordQuery(protocol, dns.RcodeServerFailure, latency)
 		s.metrics.RecordQueryDetail(clientIP, q.Name, dns.TypeToString[q.Qtype], "SERVFAIL", protocol, latency, false)
+		if s.clientStats != nil {
+			s.clientStats.RecordQuery(clientIP, q.Name, false, latency)
+		}
 		w.WriteMsg(resp)
 		return
 	}
@@ -236,13 +359,16 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// Record metrics
 	s.metrics.RecordQuery(protocol, resp.Rcode, latency)
-
-	// Record detailed query log
 	rcodeStr := dns.RcodeToString[resp.Rcode]
 	if rcodeStr == "" {
 		rcodeStr = fmt.Sprintf("RCODE_%d", resp.Rcode)
 	}
 	s.metrics.RecordQueryDetail(clientIP, q.Name, dns.TypeToString[q.Qtype], rcodeStr, protocol, latency, cached)
+
+	// Record client stats
+	if s.clientStats != nil {
+		s.clientStats.RecordQuery(clientIP, q.Name, false, latency)
+	}
 
 	// Send response
 	if err := w.WriteMsg(resp); err != nil {
@@ -258,7 +384,6 @@ func (s *Server) extractClientIP(addr net.Addr) string {
 	case *net.TCPAddr:
 		return v.IP.String()
 	default:
-		// Fallback: parse from string
 		host, _, err := net.SplitHostPort(addr.String())
 		if err != nil {
 			return strings.Split(addr.String(), ":")[0]

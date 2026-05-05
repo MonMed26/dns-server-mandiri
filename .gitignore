@@ -9,3 +9,5 @@ bin/
 *.log
 .env
 vendor/
+.playwright-mcp/
+dashboard-screenshot.png

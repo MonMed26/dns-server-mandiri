@@ -5,37 +5,94 @@ server:
   listen_addr: "0.0.0.0"
   udp_port: 53
   tcp_port: 53
-  workers: 4  # Match vCPU count
+  workers: 4
 
 cache:
-  max_size: 500000        # Maximum cached entries
-  default_ttl: 5m         # Default TTL for entries without one
-  min_ttl: 30s            # Minimum TTL (override short TTLs)
-  max_ttl: 24h            # Maximum TTL cap
-  negative_ttl: 5m        # Cache NXDOMAIN for 5 minutes
-  prefetch_ratio: 0.1     # Prefetch when 10% TTL remaining
-  cleanup_interval: 1m    # Cleanup expired entries every minute
+  max_size: 500000
+  default_ttl: 5m
+  min_ttl: 30s
+  max_ttl: 24h
+  negative_ttl: 5m
+  prefetch_ratio: 0.1
+  cleanup_interval: 1m
 
 resolver:
-  max_depth: 30           # Maximum referral depth
-  max_cname_chain: 10     # Maximum CNAME chain length
-  timeout: 2s             # Per-query timeout to upstream
-  retries: 3              # Retry count per nameserver
-  root_hints_file: ""     # Use built-in root hints
-  enable_dnssec: false    # DNSSEC validation (future)
+  max_depth: 30
+  max_cname_chain: 10
+  timeout: 2s
+  retries: 3
+  root_hints_file: ""
+  enable_dnssec: false
 
 rate:
   enabled: true
-  requests_per_sec: 100   # Per-IP rate limit
-  burst_size: 200         # Allow burst up to 200
-  cleanup_interval: 5m    # Cleanup stale rate limit buckets
+  requests_per_sec: 100
+  burst_size: 200
+  cleanup_interval: 5m
 
 metrics:
   enabled: true
   listen_addr: "0.0.0.0"
-  port: 9153              # HTTP metrics endpoint
+  port: 9153
 
 logging:
-  level: "info"           # debug, info, warn, error
-  file: ""                # Empty = stdout (use systemd journal)
-  query_log: false        # Log every DNS query (verbose!)
+  level: "info"
+  file: ""
+  query_log: false
+
+# === NEW FEATURES ===
+
+# DNS Filtering (Ad/Malware blocking - like Pi-hole)
+filter:
+  enabled: true
+  blocklist_dir: "/var/lib/dns-server/blocklists"
+  sources:
+    - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+    - "https://adaway.org/hosts.txt"
+    - "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0"
+  whitelist_file: ""
+  blacklist_file: ""
+  update_interval: 24h
+  block_response: "zero"  # "zero" (0.0.0.0), "nxdomain", "refused"
+
+# Failover to upstream DNS (fallback if recursive fails)
+failover:
+  enabled: true
+  upstreams:
+    - "8.8.8.8"
+    - "1.1.1.1"
+    - "9.9.9.9"
+  timeout: 3s
+  max_retries: 2
+
+# Cache persistence (survive restart)
+persistence:
+  enabled: true
+  file_path: "/var/lib/dns-server/cache.gob"
+  save_interval: 5m
+
+# Custom local DNS records
+local_records:
+  enabled: true
+  records:
+    # Example: captive portal
+    # - name: "login.hotspot.local"
+    #   type: "A"
+    #   value: "192.168.20.1"
+    #   ttl: 300
+    # Example: internal server
+    # - name: "server.local"
+    #   type: "A"
+    #   value: "192.168.20.196"
+    #   ttl: 300
+
+# Per-client statistics
+client_stats:
+  enabled: true
+  max_clients: 10000
+
+# EDNS Client Subnet (helps CDNs return closer servers)
+ecs:
+  enabled: true
+  subnet_ipv4: 24
+  subnet_ipv6: 56
