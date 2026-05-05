@@ -1,0 +1,41 @@
+# DNS Server Mandiri - Configuration
+# Optimized for 300+ hotspot users behind Mikrotik
+
+server:
+  listen_addr: "0.0.0.0"
+  udp_port: 53
+  tcp_port: 53
+  workers: 4  # Match vCPU count
+
+cache:
+  max_size: 500000        # Maximum cached entries
+  default_ttl: 5m         # Default TTL for entries without one
+  min_ttl: 30s            # Minimum TTL (override short TTLs)
+  max_ttl: 24h            # Maximum TTL cap
+  negative_ttl: 5m        # Cache NXDOMAIN for 5 minutes
+  prefetch_ratio: 0.1     # Prefetch when 10% TTL remaining
+  cleanup_interval: 1m    # Cleanup expired entries every minute
+
+resolver:
+  max_depth: 30           # Maximum referral depth
+  max_cname_chain: 10     # Maximum CNAME chain length
+  timeout: 2s             # Per-query timeout to upstream
+  retries: 3              # Retry count per nameserver
+  root_hints_file: ""     # Use built-in root hints
+  enable_dnssec: false    # DNSSEC validation (future)
+
+rate:
+  enabled: true
+  requests_per_sec: 100   # Per-IP rate limit
+  burst_size: 200         # Allow burst up to 200
+  cleanup_interval: 5m    # Cleanup stale rate limit buckets
+
+metrics:
+  enabled: true
+  listen_addr: "0.0.0.0"
+  port: 9153              # HTTP metrics endpoint
+
+logging:
+  level: "info"           # debug, info, warn, error
+  file: ""                # Empty = stdout (use systemd journal)
+  query_log: false        # Log every DNS query (verbose!)

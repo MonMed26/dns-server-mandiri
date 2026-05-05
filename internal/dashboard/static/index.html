@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNS Server Mandiri - Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --border: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent: #38bdf8;
+            --accent-green: #4ade80;
+            --accent-yellow: #fbbf24;
+            --accent-red: #f87171;
+            --accent-purple: #a78bfa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .header .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            transition: border-color 0.2s;
+        }
+
+        .stat-card:hover {
+            border-color: var(--accent);
+        }
+
+        .stat-card .label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-card .value.accent { color: var(--accent); }
+        .stat-card .value.green { color: var(--accent-green); }
+        .stat-card .value.yellow { color: var(--accent-yellow); }
+        .stat-card .value.red { color: var(--accent-red); }
+        .stat-card .value.purple { color: var(--accent-purple); }
+
+        .stat-card .sub {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 1024px) {
+            .panels { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header h2 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .panel-body {
+            padding: 1rem 1.25rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Chart area */
+        .chart-container {
+            padding: 1rem 1.25rem;
+            height: 200px;
+            position: relative;
+        }
+
+        .chart-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* QPS Chart using CSS */
+        .qps-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 150px;
+            padding: 0.5rem 0;
+        }
+
+        .qps-bar {
+            flex: 1;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
+            min-width: 3px;
+            transition: height 0.3s ease;
+            opacity: 0.8;
+        }
+
+        .qps-bar:hover {
+            opacity: 1;
+        }
+
+        /* Latency histogram */
+        .histogram {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 120px;
+            padding: 0.5rem 0;
+        }
+
+        .histogram-bar-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+        }
+
+        .histogram-bar {
+            width: 100%;
+            background: var(--accent-purple);
+            border-radius: 3px 3px 0 0;
+            transition: height 0.3s ease;
+            min-height: 2px;
+        }
+
+        .histogram-label {
+            font-size: 0.6rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        /* Table styles */
+        .query-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .query-table th {
+            text-align: left;
+            padding: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: var(--bg-card);
+        }
+
+        .query-table td {
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .query-table tr:hover td {
+            background: rgba(56, 189, 248, 0.05);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.4rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .badge-success { background: rgba(74, 222, 128, 0.15); color: var(--accent-green); }
+        .badge-error { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+        .badge-warning { background: rgba(251, 191, 36, 0.15); color: var(--accent-yellow); }
+        .badge-info { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
+        .badge-cached { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
+
+        /* Domain list */
+        .domain-list {
+            list-style: none;
+        }
+
+        .domain-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .domain-item:last-child {
+            border-bottom: none;
+        }
+
+        .domain-name {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        .domain-count {
+            font-size: 0.75rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .domain-bar {
+            height: 3px;
+            background: var(--accent);
+            border-radius: 2px;
+            margin-top: 4px;
+            opacity: 0.5;
+            transition: width 0.3s ease;
+        }
+
+        /* Full width panel */
+        .full-panel {
+            grid-column: 1 / -1;
+        }
+
+        /* Refresh indicator */
+        .refresh-indicator {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .footer {
+            text-align: center;
+            padding: 1rem;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>DNS Server Mandiri</h1>
+        <div class="status">
+            <div class="status-dot"></div>
+            <span id="uptime">Starting...</span>
+            <span class="refresh-indicator" id="refresh-indicator">| Auto-refresh: 3s</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="label">Total Queries</div>
+                <div class="value accent" id="total-queries">0</div>
+                <div class="sub" id="qps-sub">0 queries/sec</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Cache Hit Ratio</div>
+                <div class="value green" id="cache-ratio">0%</div>
+                <div class="sub" id="cache-sub">0 hits / 0 misses</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Latency</div>
+                <div class="value yellow" id="avg-latency">0ms</div>
+                <div class="sub" id="latency-sub">per query</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Cache Size</div>
+                <div class="value purple" id="cache-size">0</div>
+                <div class="sub" id="cache-evictions">0 evictions</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Active Clients</div>
+                <div class="value" id="active-clients">0</div>
+                <div class="sub">unique IPs</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Rate Limited</div>
+                <div class="value red" id="rate-limited">0</div>
+                <div class="sub">blocked requests</div>
+            </div>
+        </div>
+
+        <!-- Charts & Tables -->
+        <div class="panels">
+            <!-- QPS Chart -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Queries Per Second</h2>
+                    <span class="refresh-indicator">Last 30 min</span>
+                </div>
+                <div class="chart-container">
+                    <div class="qps-chart" id="qps-chart"></div>
+                </div>
+            </div>
+
+            <!-- Latency Histogram -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Latency Distribution</h2>
+                    <span class="refresh-indicator">All time</span>
+                </div>
+                <div class="chart-container">
+                    <div class="histogram" id="latency-histogram"></div>
+                </div>
+            </div>
+
+            <!-- Top Domains -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Top Domains</h2>
+                    <span class="refresh-indicator">Top 20</span>
+                </div>
+                <div class="panel-body">
+                    <ul class="domain-list" id="top-domains"></ul>
+                </div>
+            </div>
+
+            <!-- Query Type Distribution -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Query Stats</h2>
+                </div>
+                <div class="panel-body">
+                    <table class="query-table">
+                        <tbody id="query-stats-body">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Recent Queries (full width) -->
+            <div class="panel full-panel">
+                <div class="panel-header">
+                    <h2>Recent Queries</h2>
+                    <span class="refresh-indicator">Last 50</span>
+                </div>
+                <div class="panel-body" style="max-height: 500px;">
+                    <table class="query-table" id="recent-queries-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Client</th>
+                                <th>Domain</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Latency</th>
+                                <th>Cache</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-queries"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        DNS Server Mandiri v1.0.0 | Full Recursive Resolver
+    </div>
+
+    <script>
+        const API_BASE = '';
+        const REFRESH_INTERVAL = 3000;
+
+        // Format numbers with commas
+        function formatNumber(n) {
+            return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        // Format time ago
+        function timeAgo(timestamp) {
+            const now = new Date();
+            const t = new Date(timestamp);
+            const diff = (now - t) / 1000;
+            if (diff < 60) return Math.floor(diff) + 's ago';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            return Math.floor(diff / 3600) + 'h ago';
+        }
+
+        // Format time HH:MM:SS
+        function formatTime(timestamp) {
+            const t = new Date(timestamp);
+            return t.toLocaleTimeString();
+        }
+
+        // Get rcode badge class
+        function rcodeBadge(rcode) {
+            switch (rcode) {
+                case 'NOERROR': return 'badge-success';
+                case 'NXDOMAIN': return 'badge-warning';
+                case 'SERVFAIL': return 'badge-error';
+                default: return 'badge-info';
+            }
+        }
+
+        // Fetch stats
+        async function fetchStats() {
+            try {
+                const resp = await fetch(API_BASE + '/api/stats');
+                const data = await resp.json();
+
+                document.getElementById('total-queries').textContent = formatNumber(data.total_queries);
+                document.getElementById('qps-sub').textContent = data.queries_per_second.toFixed(1) + ' queries/sec';
+                document.getElementById('cache-ratio').textContent = data.cache_hit_ratio.toFixed(1) + '%';
+                document.getElementById('cache-sub').textContent = formatNumber(data.cache_hits) + ' hits / ' + formatNumber(data.cache_misses) + ' misses';
+                document.getElementById('avg-latency').textContent = data.avg_latency_ms.toFixed(2) + 'ms';
+                document.getElementById('cache-size').textContent = formatNumber(data.cache_size);
+                document.getElementById('cache-evictions').textContent = formatNumber(data.cache_evictions) + ' evictions';
+                document.getElementById('active-clients').textContent = formatNumber(data.active_clients);
+                document.getElementById('rate-limited').textContent = formatNumber(data.rate_limited);
+                document.getElementById('uptime').textContent = 'Uptime: ' + data.uptime;
+
+                // Update query stats table
+                const statsBody = document.getElementById('query-stats-body');
+                statsBody.innerHTML = `
+                    <tr><td>UDP Queries</td><td>${formatNumber(data.udp_queries)}</td></tr>
+                    <tr><td>TCP Queries</td><td>${formatNumber(data.tcp_queries)}</td></tr>
+                    <tr><td>Success (NOERROR)</td><td style="color:var(--accent-green)">${formatNumber(data.success_queries)}</td></tr>
+                    <tr><td>NXDOMAIN</td><td style="color:var(--accent-yellow)">${formatNumber(data.nxdomain)}</td></tr>
+                    <tr><td>SERVFAIL</td><td style="color:var(--accent-red)">${formatNumber(data.servfail)}</td></tr>
+                    <tr><td>Failed</td><td style="color:var(--accent-red)">${formatNumber(data.failed_queries)}</td></tr>
+                    <tr><td>Rate Limited</td><td>${formatNumber(data.rate_limited)}</td></tr>
+                    <tr><td>Cache Hit Ratio</td><td style="color:var(--accent-green)">${data.cache_hit_ratio.toFixed(1)}%</td></tr>
+                `;
+            } catch (e) {
+                console.error('Failed to fetch stats:', e);
+            }
+        }
+
+        // Fetch QPS history
+        async function fetchQPSHistory() {
+            try {
+                const resp = await fetch(API_BASE + '/api/qps-history');
+                const data = await resp.json();
+
+                const chart = document.getElementById('qps-chart');
+                if (!data || data.length === 0) {
+                    chart.innerHTML = '<div style="color:var(--text-secondary);text-align:center;width:100%;padding-top:60px;">Collecting data...</div>';
+                    return;
+                }
+
+                const maxQPS = Math.max(...data.map(d => d.qps), 1);
+                // Show last 60 points
+                const points = data.slice(-60);
+
+                chart.innerHTML = points.map(p => {
+                    const height = Math.max((p.qps / maxQPS) * 100, 2);
+                    return `<div class="qps-bar" style="height:${height}%" title="${p.qps.toFixed(1)} qps"></div>`;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to fetch QPS history:', e);
+            }
+        }
+
+        // Fetch latency histogram
+        async function fetchLatencyHistogram() {
+            try {
+                const resp = await fetch(API_BASE + '/api/latency-histogram');
+                const data = await resp.json();
+
+                const container = document.getElementById('latency-histogram');
+                const labels = ['<1ms', '1-5ms', '5-10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '>1s'];
+                const keys = ['<1ms', '1-5ms', '5-10ms', '10-50ms', '50-100ms', '100-500ms', '500-1000ms', '>1000ms'];
+                const values = keys.map(k => data[k] || 0);
+                const maxVal = Math.max(...values, 1);
+
+                container.innerHTML = values.map((v, i) => {
+                    const height = Math.max((v / maxVal) * 100, 2);
+                    const colors = ['#4ade80', '#4ade80', '#38bdf8', '#38bdf8', '#fbbf24', '#fbbf24', '#f87171', '#f87171'];
+                    return `
+                        <div class="histogram-bar-wrapper">
+                            <div class="histogram-bar" style="height:${height}%;background:${colors[i]}" title="${labels[i]}: ${formatNumber(v)}"></div>
+                            <div class="histogram-label">${labels[i]}</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to fetch histogram:', e);
+            }
+        }
+
+        // Fetch top domains
+        async function fetchTopDomains() {
+            try {
+                const resp = await fetch(API_BASE + '/api/top-domains?limit=20');
+                const data = await resp.json();
+
+                const list = document.getElementById('top-domains');
+                if (!data || data.length === 0) {
+                    list.innerHTML = '<li class="domain-item"><span class="domain-name" style="color:var(--text-secondary)">No queries yet...</span></li>';
+                    return;
+                }
+
+                const maxCount = data[0].count;
+                list.innerHTML = data.map(d => {
+                    const barWidth = (d.count / maxCount) * 100;
+                    return `
+                        <li class="domain-item">
+                            <div style="flex:1">
+                                <div style="display:flex;justify-content:space-between">
+                                    <span class="domain-name">${d.domain}</span>
+                                    <span class="domain-count">${formatNumber(d.count)} (${d.avg_latency_ms.toFixed(1)}ms)</span>
+                                </div>
+                                <div class="domain-bar" style="width:${barWidth}%"></div>
+                            </div>
+                        </li>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('Failed to fetch top domains:', e);
+            }
+        }
+
+        // Fetch recent queries
+        async function fetchRecentQueries() {
+            try {
+                const resp = await fetch(API_BASE + '/api/queries?limit=50');
+                const data = await resp.json();
+
+                const tbody = document.getElementById('recent-queries');
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">No queries yet...</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.map(q => `
+                    <tr>
+                        <td>${formatTime(q.timestamp)}</td>
+                        <td><code>${q.client_ip}</code></td>
+                        <td><code>${q.domain}</code></td>
+                        <td><span class="badge badge-info">${q.query_type}</span></td>
+                        <td><span class="badge ${rcodeBadge(q.rcode)}">${q.rcode}</span></td>
+                        <td>${q.latency_ms.toFixed(2)}ms</td>
+                        <td>${q.cached ? '<span class="badge badge-cached">HIT</span>' : '<span class="badge">MISS</span>'}</td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to fetch recent queries:', e);
+            }
+        }
+
+        // Initial fetch
+        async function refreshAll() {
+            await Promise.all([
+                fetchStats(),
+                fetchQPSHistory(),
+                fetchLatencyHistogram(),
+                fetchTopDomains(),
+                fetchRecentQueries(),
+            ]);
+        }
+
+        // Start
+        refreshAll();
+        setInterval(refreshAll, REFRESH_INTERVAL);
+    </script>
+</body>
+</html>

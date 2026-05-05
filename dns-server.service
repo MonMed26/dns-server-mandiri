@@ -1,0 +1,41 @@
+[Unit]
+Description=DNS Server Mandiri - Recursive DNS Resolver
+Documentation=https://github.com/yourusername/dns-server-mandiri
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dns-server
+Group=dns-server
+ExecStart=/usr/local/bin/dns-server -config /etc/dns-server/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/
+ReadWritePaths=/var/log/dns-server
+
+# Allow binding to port 53
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dns-server
+
+[Install]
+WantedBy=multi-user.target
