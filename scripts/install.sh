@@ -57,7 +57,17 @@ if [ ! -f "./bin/dns-server" ]; then
             apk add --no-cache go
         fi
     fi
-    CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/dns-server ./cmd/dns-server
+    # Install gcc for SQLite CGO support
+    if ! command -v gcc &> /dev/null; then
+        echo "  Installing build-essential (needed for SQLite)..."
+        if [ "$OS" = "debian" ]; then
+            apt-get update -qq
+            apt-get install -y -qq build-essential
+        elif [ "$OS" = "alpine" ]; then
+            apk add --no-cache gcc musl-dev
+        fi
+    fi
+    GOTOOLCHAIN=local CGO_ENABLED=1 go build -ldflags "-s -w" -o bin/dns-server ./cmd/dns-server
 fi
 
 cp bin/dns-server /usr/local/bin/dns-server

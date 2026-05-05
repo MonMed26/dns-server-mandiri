@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"dns-server-mandiri/internal/clientstats"
+	"dns-server-mandiri/internal/database"
 	"dns-server-mandiri/internal/failover"
 	"dns-server-mandiri/internal/filter"
 	"dns-server-mandiri/internal/localrecords"
@@ -25,7 +26,13 @@ type Dashboard struct {
 	localRecords *localrecords.LocalRecords
 	clientStats  *clientstats.Tracker
 	failover     *failover.Failover
+	db           *database.DB
 	logger       *slog.Logger
+}
+
+// helper for admin_api to create local record
+func localRecordFromDB(name, recordType, value string, ttl uint32) localrecords.Record {
+	return localrecords.Record{Name: name, Type: recordType, Value: value, TTL: ttl}
 }
 
 // New creates a new dashboard instance
@@ -82,6 +89,9 @@ func (d *Dashboard) Handler() http.Handler {
 
 	// Failover API
 	mux.HandleFunc("/api/failover/status", d.handleFailoverStatus)
+
+	// Admin API (SQLite-backed)
+	d.registerAdminRoutes(mux)
 
 	// Health
 	mux.HandleFunc("/health", d.handleHealth)

@@ -431,6 +431,13 @@ func (f *Filter) SetEnabled(enabled bool) {
 	f.enabled = enabled
 }
 
+// SetSources updates the blocklist source URLs
+func (f *Filter) SetSources(sources []string) {
+	f.mu.Lock()
+	f.sources = sources
+	f.mu.Unlock()
+}
+
 func truncateURL(url string) string {
 	if len(url) > 60 {
 		return url[:60] + "..."

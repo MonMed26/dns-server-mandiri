@@ -12,6 +12,7 @@ import (
 	"dns-server-mandiri/internal/clientstats"
 	"dns-server-mandiri/internal/config"
 	"dns-server-mandiri/internal/dashboard"
+	"dns-server-mandiri/internal/database"
 	"dns-server-mandiri/internal/ecs"
 	"dns-server-mandiri/internal/failover"
 	"dns-server-mandiri/internal/filter"
@@ -38,6 +39,7 @@ type Server struct {
 	clientStats  *clientstats.Tracker
 	ecs          *ecs.Handler
 	dashboard    *dashboard.Dashboard
+	db           *database.DB
 	logger       *slog.Logger
 	udpServer    *dns.Server
 	tcpServer    *dns.Server
@@ -112,12 +114,44 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	// Initialize ECS
 	ecsHandler := ecs.New(cfg.ECS)
 
+	// Initialize SQLite database
+	dbPath := "/var/lib/dns-server/dns-server.db"
+	if cfg.Persistence.FilePath != "" {
+		// Use same directory as persistence file
+		dbPath = cfg.Persistence.FilePath + ".db"
+	}
+	db, err := database.Open(dbPath, logger)
+	if err != nil {
+		logger.Error("failed to open database, admin features disabled", "error", err)
+	}
+
 	// Initialize dashboard
 	dash := dashboard.New(m, logger)
 	dash.SetFilter(dnsFilter)
 	dash.SetLocalRecords(lr)
 	dash.SetClientStats(cs)
 	dash.SetFailover(dnsFailover)
+	if db != nil {
+		dash.SetDatabase(db)
+	}
+
+	// Load whitelist/blacklist from database into filter
+	if db != nil && dnsFilter.IsEnabled() {
+		if wl, err := db.GetWhitelistDomains(); err == nil {
+			for _, d := range wl {
+				dnsFilter.AddToWhitelist(d)
+			}
+		}
+		if bl, err := db.GetBlacklistDomains(); err == nil {
+			for _, d := range bl {
+				dnsFilter.AddToBlacklist(d)
+			}
+		}
+		// Load blocklist sources from DB
+		if urls, err := db.GetEnabledBlocklistURLs(); err == nil && len(urls) > 0 {
+			dnsFilter.SetSources(urls)
+		}
+	}
 
 	return &Server{
 		cfg:          cfg,
@@ -130,6 +164,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 		persistence:  persist,
 		localRecords: lr,
 		clientStats:  cs,
+		db:           db,
 		ecs:          ecsHandler,
 		dashboard:    dash,
 		logger:       logger,
@@ -240,6 +275,9 @@ func (s *Server) Shutdown() {
 	}
 	if s.metrics != nil {
 		s.metrics.Stop()
+	}
+	if s.db != nil {
+		s.db.Close()
 	}
 
 	s.logger.Info("DNS server stopped")

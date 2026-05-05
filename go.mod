@@ -3,6 +3,7 @@ module dns-server-mandiri
 go 1.21
 
 require (
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/miekg/dns v1.1.59
 	golang.org/x/sys v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
