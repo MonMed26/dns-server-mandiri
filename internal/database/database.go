@@ -134,19 +134,7 @@ func (db *DB) initDefaults() {
 		db.conn.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", key, value)
 	}
 
-	// Insert default blocklist sources
-	defaultSources := []struct {
-		name string
-		url  string
-	}{
-		{"StevenBlack Unified", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"},
-		{"AdAway", "https://adaway.org/hosts.txt"},
-		{"Yoyo Ad Servers", "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0"},
-	}
-
-	for _, s := range defaultSources {
-		db.conn.Exec("INSERT OR IGNORE INTO blocklist_sources (name, url, enabled) VALUES (?, ?, 1)", s.name, s.url)
-	}
+	// No default blocklist sources - user adds via dashboard
 
 	// Insert default failover upstreams
 	defaultUpstreams := []string{"8.8.8.8", "1.1.1.1", "9.9.9.9"}

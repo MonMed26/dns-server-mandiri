@@ -43,13 +43,11 @@ logging:
 # === NEW FEATURES ===
 
 # DNS Filtering (Ad/Malware blocking - like Pi-hole)
+# Blocklist sources are managed via dashboard GUI
 filter:
   enabled: true
   blocklist_dir: "/var/lib/dns-server/blocklists"
-  sources:
-    - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
-    - "https://adaway.org/hosts.txt"
-    - "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0"
+  sources: []  # Add via dashboard Settings tab
   whitelist_file: ""
   blacklist_file: ""
   update_interval: 24h

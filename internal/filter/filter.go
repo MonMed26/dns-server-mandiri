@@ -98,8 +98,10 @@ func New(cfg Config, logger *slog.Logger) *Filter {
 		f.loadListFile(cfg.BlacklistFile, f.blacklist)
 	}
 
-	// Load blocklists
-	f.LoadBlocklists()
+	// Load blocklists in background (non-blocking)
+	if len(f.sources) > 0 {
+		go f.LoadBlocklists()
+	}
 
 	// Start auto-update
 	if cfg.UpdateInterval > 0 {

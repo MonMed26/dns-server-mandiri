@@ -119,6 +119,7 @@
         <div class="tab" data-tab="clients">Clients</div>
         <div class="tab" data-tab="records">Local Records</div>
         <div class="tab" data-tab="queries">Query Log</div>
+        <div class="tab" data-tab="settings">Settings</div>
     </div>
 
     <!-- OVERVIEW TAB -->
@@ -214,7 +215,36 @@
     </div>
     </div>
 
-    <div class="footer">DNS Server Mandiri v1.1.0 | Full Recursive Resolver + Ad Blocking + Failover</div>
+    <!-- SETTINGS TAB -->
+    <div class="tab-content" id="tab-settings">
+    <div class="container">
+        <div class="panels">
+            <div class="panel">
+                <div class="panel-header"><h2>Blocklist Sources</h2><button class="btn btn-primary btn-sm" onclick="reloadBlocklistsFromSettings()">Download & Apply</button></div>
+                <div class="panel-body">
+                    <div class="form-row">
+                        <input class="form-input" id="source-name" placeholder="Name (e.g. AdAway)" style="flex:1">
+                        <input class="form-input" id="source-url" placeholder="https://example.com/hosts.txt" style="flex:3">
+                        <button class="btn btn-primary btn-sm" onclick="addSource()">Add</button>
+                    </div>
+                    <table class="query-table"><thead><tr><th>Enabled</th><th>Name</th><th>URL</th><th>Domains</th><th>Last Updated</th><th>Action</th></tr></thead><tbody id="sources-table"></tbody></table>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header"><h2>Failover Upstreams</h2></div>
+                <div class="panel-body">
+                    <div class="form-row">
+                        <input class="form-input" id="upstream-addr" placeholder="8.8.8.8">
+                        <button class="btn btn-primary btn-sm" onclick="addUpstream()">Add</button>
+                    </div>
+                    <table class="query-table"><thead><tr><th>Enabled</th><th>Address</th><th>Priority</th><th>Action</th></tr></thead><tbody id="upstreams-table"></tbody></table>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <div class="footer">DNS Server Mandiri v1.2.0 | Full Recursive Resolver + Ad Blocking + Failover</div>
 
     <script>
     const REFRESH = 3000;
@@ -399,9 +429,81 @@
         fetchRecords();
     }
 
+    // === Settings Tab ===
+    async function fetchSources() {
+        try {
+            const r = await fetch('/api/admin/blocklist-sources'); const d = await r.json();
+            const el = document.getElementById('sources-table');
+            if(!d||!d.length){el.innerHTML='<tr><td colspan="6" style="color:var(--text-secondary)">No sources added. Add blocklist URLs above.</td></tr>';return;}
+            el.innerHTML=d.map(s=>`<tr>
+                <td><input type="checkbox" ${s.enabled?'checked':''} onchange="toggleSource(${s.id},this.checked)"></td>
+                <td>${s.name}</td>
+                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><code title="${s.url}">${s.url}</code></td>
+                <td>${s.domain_count>0?fmt(s.domain_count):'-'}</td>
+                <td>${s.last_updated?new Date(s.last_updated).toLocaleString():'-'}</td>
+                <td><button class="btn btn-danger btn-sm" onclick="removeSource(${s.id})">Del</button></td>
+            </tr>`).join('');
+        } catch(e) {}
+    }
+
+    async function addSource() {
+        const name=document.getElementById('source-name').value.trim();
+        const url=document.getElementById('source-url').value.trim();
+        if(!url) return;
+        await fetch('/api/admin/blocklist-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name||url,url})});
+        document.getElementById('source-name').value='';document.getElementById('source-url').value='';
+        fetchSources();
+    }
+
+    async function removeSource(id) {
+        if(!confirm('Remove this source?')) return;
+        await fetch('/api/admin/blocklist-sources',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+        fetchSources();
+    }
+
+    async function toggleSource(id, enabled) {
+        await fetch('/api/admin/blocklist-sources/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enabled})});
+    }
+
+    async function reloadBlocklistsFromSettings() {
+        await fetch('/api/admin/blocklist-sources/reload',{method:'POST'});
+        alert('Blocklists downloading in background. Check back in a few minutes.');
+    }
+
+    async function fetchUpstreams() {
+        try {
+            const r = await fetch('/api/admin/upstreams'); const d = await r.json();
+            const el = document.getElementById('upstreams-table');
+            if(!d||!d.length){el.innerHTML='<tr><td colspan="4" style="color:var(--text-secondary)">No upstreams configured</td></tr>';return;}
+            el.innerHTML=d.map(u=>`<tr>
+                <td><input type="checkbox" ${u.enabled?'checked':''} onchange="toggleUpstream(${u.id},this.checked)"></td>
+                <td><code>${u.address}</code></td>
+                <td>${u.priority}</td>
+                <td><button class="btn btn-danger btn-sm" onclick="removeUpstream(${u.id})">Del</button></td>
+            </tr>`).join('');
+        } catch(e) {}
+    }
+
+    async function addUpstream() {
+        const address=document.getElementById('upstream-addr').value.trim();
+        if(!address) return;
+        await fetch('/api/admin/upstreams',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address,priority:0})});
+        document.getElementById('upstream-addr').value='';
+        fetchUpstreams();
+    }
+
+    async function removeUpstream(id) {
+        await fetch('/api/admin/upstreams',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+        fetchUpstreams();
+    }
+
+    async function toggleUpstream(id, enabled) {
+        await fetch('/api/admin/upstreams/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enabled})});
+    }
+
     // Refresh
     async function refreshAll() {
-        await Promise.all([fetchStats(),fetchQPS(),fetchHistogram(),fetchTopDomains(),fetchQueries(),fetchFailover(),fetchFilterStats(),fetchWhitelist(),fetchBlacklist(),fetchClients(),fetchRecords()]);
+        await Promise.all([fetchStats(),fetchQPS(),fetchHistogram(),fetchTopDomains(),fetchQueries(),fetchFailover(),fetchFilterStats(),fetchWhitelist(),fetchBlacklist(),fetchClients(),fetchRecords(),fetchSources(),fetchUpstreams()]);
     }
     refreshAll();
     setInterval(refreshAll, REFRESH);
