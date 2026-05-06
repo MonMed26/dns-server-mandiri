@@ -123,11 +123,16 @@ echo "[2/5] Installing AdGuard Home..."
 
 # Check if AdGuard already installed
 if [ -f "/opt/AdGuardHome/AdGuardHome" ]; then
-    echo "AdGuard Home already installed, skipping..."
+    echo "AdGuard Home already installed"
+    echo "Stopping AdGuard Home for reconfiguration..."
+    systemctl stop AdGuardHome 2>/dev/null || true
 else
     # Download and install
     echo "Downloading AdGuard Home..."
     curl -s -S -L https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
+    
+    # Wait for installation
+    sleep 2
 fi
 
 echo ""
