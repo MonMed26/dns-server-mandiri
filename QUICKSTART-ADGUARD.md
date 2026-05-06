@@ -114,11 +114,33 @@ Secondary DNS: 1.1.1.1 (backup)
 
 ## Troubleshooting
 
+**AdGuard sudah terinstall sebelumnya:**
+```bash
+# Opsi 1: Konfigurasi AdGuard yang ada
+sudo bash scripts/configure-adguard.sh
+
+# Opsi 2: Reset dan reinstall fresh
+sudo bash scripts/reinstall-adguard.sh
+```
+
+**Lupa password AdGuard:**
+```bash
+# Reset AdGuard (akan muncul setup wizard lagi)
+sudo systemctl stop AdGuardHome
+sudo rm /opt/AdGuardHome/AdGuardHome.yaml
+sudo rm -rf /opt/AdGuardHome/data
+sudo systemctl start AdGuardHome
+# Buka http://your-server-ip:3000
+```
+
 **AdGuard tidak bisa resolve:**
 ```bash
 # Cek DNS Server Mandiri running
 sudo systemctl status dns-server
 dig @127.0.0.1 -p 5353 google.com
+
+# Konfigurasi ulang AdGuard
+sudo bash scripts/configure-adguard.sh
 ```
 
 **Port 53 sudah dipakai:**
