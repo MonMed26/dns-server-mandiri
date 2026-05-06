@@ -15,11 +15,7 @@
 - ✅ **Rate Limiting** - Protection dari DNS flood
 - ✅ **EDNS Client Subnet** - Optimal CDN routing
 
-## 📦 Mode Deployment
-
-### Mode 1: Standalone (Recommended untuk Performa)
-
-DNS Server Mandiri berjalan sendiri dengan semua fitur built-in.
+## 🏗️ Arsitektur
 
 ```
 Clients → DNS Server Mandiri (port 53) → Internet
@@ -28,44 +24,13 @@ Clients → DNS Server Mandiri (port 53) → Internet
 
 **Keuntungan:**
 - ⚡ Performa maksimal (no overhead)
-- 🎯 Simple setup
+- 🎯 Simple setup & maintenance
 - 📊 Dashboard built-in
-
-**Install:**
-```bash
-make build
-sudo make install
-sudo systemctl start dns-server
-```
-
-### Mode 2: Upstream untuk AdGuard Home
-
-DNS Server Mandiri sebagai recursive resolver backend, AdGuard Home sebagai frontend UI (seperti Unbound + AdGuard).
-
-```
-Clients → AdGuard Home (port 53) → DNS Server Mandiri (port 5353) → Internet
-          [UI + Filtering]           [Recursive Resolver + Cache]
-```
-
-**Keuntungan:**
-- 🎨 UI AdGuard yang lebih mature
-- 🛡️ Filtering lebih powerful
-- 📈 Statistics lebih detail
-
-**Kekurangan:**
-- ⚠️ Sedikit overhead latency (~1-2ms)
-- 🔧 Maintain 2 services
-
-**Install:**
-```bash
-sudo bash scripts/install-with-adguard.sh
-```
-
-**Dokumentasi:** [ADGUARD-INTEGRATION.md](ADGUARD-INTEGRATION.md)
+- 🛡️ Privacy-focused (no third-party DNS)
 
 ---
 
-## 🔧 Quick Start (Standalone)
+## 🔧 Quick Start
 
 ### Linux
 
@@ -156,23 +121,9 @@ sudo systemctl restart dns-server
 
 ---
 
-## 🔄 Switch Mode
+## 🧪 Testing & Monitoring
 
-### Dari Standalone ke AdGuard Mode
-
-```bash
-sudo bash scripts/install-with-adguard.sh
-```
-
-### Dari AdGuard ke Standalone
-
-```bash
-sudo bash scripts/uninstall-adguard.sh
-```
-
----
-
-## 🧪 Testing
+### Test DNS Resolution
 
 ```bash
 # Test DNS resolution
@@ -188,24 +139,11 @@ dig @localhost doubleclick.net
 make bench
 ```
 
----
+### Monitoring
 
-## 📈 Performa
+**Dashboard**: http://your-server-ip:9153
 
-Tested dengan 300+ concurrent users:
-
-- **QPS**: 5000+ queries/second
-- **Latency**: <5ms (cache hit), <50ms (cache miss)
-- **Cache Hit Rate**: 85-95%
-- **Memory**: ~500MB (dengan 500K cache entries)
-- **CPU**: <10% (4 workers pada 4-core CPU)
-
----
-
-## 🛠️ Management
-
-### Logs
-
+**Logs:**
 ```bash
 # View logs
 sudo journalctl -u dns-server -f
@@ -214,8 +152,7 @@ sudo journalctl -u dns-server -f
 sudo journalctl -u dns-server -n 100
 ```
 
-### Status
-
+**Status:**
 ```bash
 # Check status
 sudo systemctl status dns-server
@@ -240,33 +177,33 @@ sudo systemctl start dns-server
 
 ---
 
-## 📚 Dokumentasi
+## 📈 Performa
 
-- **[ADGUARD-INTEGRATION.md](ADGUARD-INTEGRATION.md)** - Setup dengan AdGuard Home
-- **[QUICKSTART-ADGUARD.md](QUICKSTART-ADGUARD.md)** - Quick reference AdGuard
-- **[config.yaml](config.yaml)** - Config standalone mode
-- **[config-upstream.yaml](config-upstream.yaml)** - Config upstream mode
+Tested dengan 300+ concurrent users:
+
+- **QPS**: 5000+ queries/second
+- **Latency**: <5ms (cache hit), <50ms (cache miss)
+- **Cache Hit Rate**: 85-95%
+- **Memory**: ~500MB (dengan 500K cache entries)
+- **CPU**: <10% (4 workers pada 4-core CPU)
 
 ---
 
 ## 🗑️ Uninstall
 
-### Standalone Mode
-
 ```bash
 sudo make uninstall
 ```
 
-### Dengan AdGuard
-
+Atau manual:
 ```bash
-# Remove AdGuard, keep DNS Server Mandiri
-sudo bash scripts/uninstall-adguard.sh
-
-# Remove semua
-sudo make uninstall
-sudo systemctl stop AdGuardHome
-sudo rm -rf /opt/AdGuardHome
+sudo systemctl stop dns-server
+sudo systemctl disable dns-server
+sudo rm -f /usr/local/bin/dns-server
+sudo rm -rf /etc/dns-server /var/lib/dns-server
+sudo rm -f /etc/systemd/system/dns-server.service
+sudo userdel dns-server
+sudo systemctl daemon-reload
 ```
 
 ---
@@ -315,15 +252,14 @@ Pull requests welcome! Untuk perubahan besar, buka issue dulu untuk diskusi.
 
 ## 📝 License
 
-MIT License - lihat [LICENSE](LICENSE) file
+MIT License
 
 ---
 
 ## 🙏 Credits
 
 - [miekg/dns](https://github.com/miekg/dns) - DNS library untuk Go
-- [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome) - Inspirasi untuk filtering
-- [Pi-hole](https://pi-hole.net/) - Inspirasi untuk dashboard
+- [Pi-hole](https://pi-hole.net/) - Inspirasi untuk filtering & dashboard
 
 ---
 

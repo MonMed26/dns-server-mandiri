@@ -21,22 +21,18 @@ build-dev:
 run:
 	go run ./cmd/dns-server -config config.yaml -log-level debug -query-log
 
-# Install on Linux server (standalone mode)
+# Install on Linux server
 .PHONY: install
 install: build
 	sudo cp bin/$(BINARY_NAME) /usr/local/bin/
-	sudo mkdir -p /etc/dns-server
+	sudo mkdir -p /etc/dns-server /var/lib/dns-server
 	sudo cp config.yaml /etc/dns-server/
 	sudo useradd -r -s /bin/false dns-server 2>/dev/null || true
+	sudo chown -R dns-server:dns-server /var/lib/dns-server
 	sudo cp dns-server.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable dns-server
 	@echo "Installation complete. Start with: sudo systemctl start dns-server"
-
-# Install with AdGuard Home (upstream mode)
-.PHONY: install-with-adguard
-install-with-adguard:
-	@bash scripts/install-with-adguard.sh
 
 # Uninstall from Linux
 .PHONY: uninstall
@@ -45,9 +41,10 @@ uninstall:
 	sudo systemctl disable dns-server 2>/dev/null || true
 	sudo rm -f /etc/systemd/system/dns-server.service
 	sudo rm -f /usr/local/bin/$(BINARY_NAME)
-	sudo rm -rf /etc/dns-server
+	sudo rm -rf /etc/dns-server /var/lib/dns-server
 	sudo userdel dns-server 2>/dev/null || true
 	sudo systemctl daemon-reload
+	@echo "Uninstall complete"
 
 # Cross-compile for ARM (if needed for ARM server)
 .PHONY: build-arm
