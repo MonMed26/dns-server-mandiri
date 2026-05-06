@@ -21,7 +21,7 @@ build-dev:
 run:
 	go run ./cmd/dns-server -config config.yaml -log-level debug -query-log
 
-# Install on Linux server
+# Install on Linux server (standalone mode)
 .PHONY: install
 install: build
 	sudo cp bin/$(BINARY_NAME) /usr/local/bin/
@@ -32,6 +32,11 @@ install: build
 	sudo systemctl daemon-reload
 	sudo systemctl enable dns-server
 	@echo "Installation complete. Start with: sudo systemctl start dns-server"
+
+# Install with AdGuard Home (upstream mode)
+.PHONY: install-with-adguard
+install-with-adguard:
+	@bash scripts/install-with-adguard.sh
 
 # Uninstall from Linux
 .PHONY: uninstall

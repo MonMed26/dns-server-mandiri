@@ -1,0 +1,83 @@
+# DNS Server Mandiri - Upstream Mode Configuration
+# For use with AdGuard Home (like Unbound + AdGuard setup)
+# AdGuard Home listens on port 53, this server on port 5353
+
+server:
+  listen_addr: "127.0.0.1"  # Only listen on localhost (AdGuard will forward here)
+  udp_port: 5353            # Non-standard port to avoid conflict with AdGuard
+  tcp_port: 5353
+  workers: 4                # Adjust based on CPU cores
+
+cache:
+  max_size: 500000          # Large cache for 300+ users
+  default_ttl: 5m
+  min_ttl: 30s
+  max_ttl: 24h
+  negative_ttl: 5m
+  prefetch_ratio: 0.1       # Prefetch 10% of expiring entries
+  cleanup_interval: 1m
+
+resolver:
+  max_depth: 30
+  max_cname_chain: 10
+  timeout: 2s
+  retries: 3
+  root_hints_file: ""
+  enable_dnssec: false      # Enable if you need DNSSEC validation
+
+rate:
+  enabled: true
+  requests_per_sec: 200     # Higher limit since AdGuard is frontend
+  burst_size: 400
+  cleanup_interval: 5m
+
+metrics:
+  enabled: true
+  listen_addr: "127.0.0.1"  # Keep metrics internal
+  port: 9153
+
+logging:
+  level: "info"             # Use "debug" for troubleshooting
+  file: ""
+  query_log: false          # AdGuard handles query logging
+
+# === DISABLED FEATURES (AdGuard handles these) ===
+
+# DNS Filtering - DISABLED (AdGuard does this)
+filter:
+  enabled: false
+  blocklist_dir: ""
+  sources: []
+  whitelist_file: ""
+  blacklist_file: ""
+  update_interval: 24h
+  block_response: "zero"
+
+# Failover - DISABLED (let AdGuard handle upstream fallback)
+failover:
+  enabled: false
+  upstreams: []
+  timeout: 3s
+  max_retries: 2
+
+# Cache persistence - ENABLED (good for restarts)
+persistence:
+  enabled: true
+  file_path: "/var/lib/dns-server/cache.gob"
+  save_interval: 5m
+
+# Custom local DNS records - DISABLED (use AdGuard's DNS rewrites)
+local_records:
+  enabled: false
+  records: []
+
+# Per-client statistics - DISABLED (AdGuard has better stats)
+client_stats:
+  enabled: false
+  max_clients: 10000
+
+# EDNS Client Subnet - ENABLED (helps CDNs)
+ecs:
+  enabled: true
+  subnet_ipv4: 24
+  subnet_ipv6: 56
