@@ -143,10 +143,11 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	// Always load regardless of filter enabled state, so data is ready
 	// when filter is enabled later via dashboard.
 	if db != nil {
-		// Apply filter_enabled setting from DB (overrides config)
+		// Apply filter_enabled setting from DB (overrides config only if explicitly set)
 		if val, err := db.GetSetting("filter_enabled"); err == nil && val != "" {
-			dnsFilter.SetEnabled(val == "true")
-			logger.Info("filter enabled state from database", "enabled", val == "true")
+			filterEnabled := val == "true"
+			dnsFilter.SetEnabled(filterEnabled)
+			logger.Info("filter enabled state from database", "enabled", filterEnabled)
 		}
 	}
 	if db != nil {

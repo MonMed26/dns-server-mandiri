@@ -137,6 +137,9 @@ func (d *Dashboard) Handler() http.Handler {
 	// Admin API (SQLite-backed, protected)
 	d.registerAdminRoutes(mux)
 
+	// Filter debug endpoint (protected)
+	mux.HandleFunc("/api/filter/debug", d.basicAuth(d.handleFilterDebug))
+
 	// Health (unprotected - for monitoring)
 	mux.HandleFunc("/health", d.handleHealth)
 
@@ -487,6 +490,38 @@ func (d *Dashboard) handleFailoverStatus(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"enabled":   d.failover.IsEnabled(),
 		"upstreams": d.failover.GetHealthStatus(),
+	})
+}
+
+// handleFilterDebug returns detailed filter state for debugging
+func (d *Dashboard) handleFilterDebug(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if d.filter == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"error": "filter is nil"})
+		return
+	}
+
+	blocked, allowed, listSize := d.filter.Stats()
+
+	// Test a known ad domain
+	testDomains := []string{"doubleclick.net", "ads.google.com", "pagead2.googlesyndication.com", "test-blocked.example.com"}
+	testResults := make(map[string]bool)
+	for _, td := range testDomains {
+		testResults[td] = d.filter.IsBlocked(td)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":         d.filter.IsEnabled(),
+		"blocked_map_size": d.filter.BlockedCount(),
+		"blacklist_size":  d.filter.BlacklistCount(),
+		"whitelist":       d.filter.GetWhitelist(),
+		"blacklist":       d.filter.GetBlacklist(),
+		"total_blocked":   blocked,
+		"total_allowed":   allowed,
+		"blocklist_size_stat": listSize,
+		"test_results":    testResults,
 	})
 }
 

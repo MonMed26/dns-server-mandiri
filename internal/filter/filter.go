@@ -124,6 +124,20 @@ func New(cfg Config, logger *slog.Logger) *Filter {
 	return f
 }
 
+// BlockedCount returns the number of domains in the blocklist
+func (f *Filter) BlockedCount() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return len(f.blocked)
+}
+
+// BlacklistCount returns the number of manually blacklisted domains
+func (f *Filter) BlacklistCount() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return len(f.blacklist)
+}
+
 // IsBlocked checks if a domain should be blocked
 func (f *Filter) IsBlocked(domain string) bool {
 	if !f.enabled {
