@@ -372,6 +372,14 @@ func (d *Dashboard) handleFilterToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d.filter.SetEnabled(req.Enabled)
+	// Persist to database
+	if d.db != nil {
+		enabledStr := "false"
+		if req.Enabled {
+			enabledStr = "true"
+		}
+		d.db.SetSetting("filter_enabled", enabledStr)
+	}
 	json.NewEncoder(w).Encode(map[string]bool{"enabled": req.Enabled})
 }
 
@@ -382,6 +390,14 @@ func (d *Dashboard) handleFilterReload(w http.ResponseWriter, r *http.Request) {
 	if d.filter == nil || r.Method != "POST" {
 		http.Error(w, "not available", 400)
 		return
+	}
+
+	// Sync sources from DB before reloading
+	if d.db != nil {
+		urls, _ := d.db.GetEnabledBlocklistURLs()
+		if len(urls) > 0 {
+			d.filter.SetSources(urls)
+		}
 	}
 
 	go d.filter.LoadBlocklists()

@@ -139,21 +139,43 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 		dash.SetDatabase(db)
 	}
 
-	// Load whitelist/blacklist from database into filter
-	if db != nil && dnsFilter.IsEnabled() {
+	// Load settings and filter data from database.
+	// Always load regardless of filter enabled state, so data is ready
+	// when filter is enabled later via dashboard.
+	if db != nil {
+		// Apply filter_enabled setting from DB (overrides config)
+		if val, err := db.GetSetting("filter_enabled"); err == nil && val != "" {
+			dnsFilter.SetEnabled(val == "true")
+			logger.Info("filter enabled state from database", "enabled", val == "true")
+		}
+	}
+	if db != nil {
 		if wl, err := db.GetWhitelistDomains(); err == nil {
 			for _, d := range wl {
 				dnsFilter.AddToWhitelist(d)
+			}
+			if len(wl) > 0 {
+				logger.Info("loaded whitelist from database", "count", len(wl))
 			}
 		}
 		if bl, err := db.GetBlacklistDomains(); err == nil {
 			for _, d := range bl {
 				dnsFilter.AddToBlacklist(d)
 			}
+			if len(bl) > 0 {
+				logger.Info("loaded blacklist from database", "count", len(bl))
+			}
 		}
-		// Load blocklist sources from DB
+		// Load blocklist sources from DB — these override config sources
 		if urls, err := db.GetEnabledBlocklistURLs(); err == nil && len(urls) > 0 {
 			dnsFilter.SetSources(urls)
+			logger.Info("loaded blocklist sources from database", "count", len(urls))
+		}
+
+		// If filter is enabled and has sources, trigger blocklist loading
+		// (in case sources were loaded from DB after filter.New() already ran)
+		if dnsFilter.IsEnabled() {
+			dnsFilter.ReloadIfNeeded()
 		}
 	}
 

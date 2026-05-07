@@ -52,6 +52,10 @@ type Filter struct {
 	// Top blocked domains tracking
 	blockedCounts   map[string]uint64
 	blockedCountsMu sync.RWMutex
+
+	// Track if auto-update goroutine is running
+	autoUpdateRunning bool
+	autoUpdateMu      sync.Mutex
 }
 
 // Config for the filter
@@ -68,7 +72,7 @@ type Config struct {
 // DefaultFilterConfig returns default filter configuration
 func DefaultFilterConfig() Config {
 	return Config{
-		Enabled:        false,
+		Enabled:        true,
 		BlocklistDir:   "/var/lib/dns-server/blocklists",
 		Sources:        DefaultBlocklistURLs,
 		WhitelistFile:  "",
@@ -93,31 +97,28 @@ func New(cfg Config, logger *slog.Logger) *Filter {
 		blockedCounts:  make(map[string]uint64),
 	}
 
-	if !f.enabled {
-		return f
-	}
-
-	// Create blocklist directory
+	// Always create blocklist directory and load files, even if disabled.
+	// This way when filter is enabled later via dashboard, data is ready.
 	os.MkdirAll(cfg.BlocklistDir, 0755)
 
-	// Load whitelist
+	// Load whitelist from file
 	if cfg.WhitelistFile != "" {
 		f.loadListFile(cfg.WhitelistFile, f.whitelist)
 	}
 
-	// Load blacklist
+	// Load blacklist from file
 	if cfg.BlacklistFile != "" {
 		f.loadListFile(cfg.BlacklistFile, f.blacklist)
 	}
 
-	// Load blocklists in background (non-blocking)
-	if len(f.sources) > 0 {
+	// Load blocklists in background (non-blocking) — only if enabled AND has sources
+	if f.enabled && len(f.sources) > 0 {
 		go f.LoadBlocklists()
 	}
 
-	// Start auto-update
-	if cfg.UpdateInterval > 0 {
-		go f.autoUpdate()
+	// Start auto-update (only if enabled)
+	if f.enabled && cfg.UpdateInterval > 0 {
+		f.startAutoUpdate()
 	}
 
 	return f
@@ -461,6 +462,18 @@ func (f *Filter) GetTopBlocked(limit int) []BlockedDomainStat {
 	return stats[:limit]
 }
 
+// startAutoUpdate starts the auto-update goroutine if not already running
+func (f *Filter) startAutoUpdate() {
+	f.autoUpdateMu.Lock()
+	defer f.autoUpdateMu.Unlock()
+
+	if f.autoUpdateRunning {
+		return
+	}
+	f.autoUpdateRunning = true
+	go f.autoUpdate()
+}
+
 // autoUpdate periodically refreshes blocklists
 func (f *Filter) autoUpdate() {
 	ticker := time.NewTicker(f.updateInterval)
@@ -469,9 +482,14 @@ func (f *Filter) autoUpdate() {
 	for {
 		select {
 		case <-ticker.C:
-			f.logger.Info("auto-updating blocklists")
-			f.LoadBlocklists()
+			if f.enabled {
+				f.logger.Info("auto-updating blocklists")
+				f.LoadBlocklists()
+			}
 		case <-f.stopChan:
+			f.autoUpdateMu.Lock()
+			f.autoUpdateRunning = false
+			f.autoUpdateMu.Unlock()
 			return
 		}
 	}
@@ -487,9 +505,29 @@ func (f *Filter) IsEnabled() bool {
 	return f.enabled
 }
 
-// SetEnabled enables or disables filtering
+// SetEnabled enables or disables filtering.
+// When enabling, triggers blocklist loading if blocklists are empty.
 func (f *Filter) SetEnabled(enabled bool) {
+	wasEnabled := f.enabled
 	f.enabled = enabled
+
+	// If just enabled and blocklists are empty, load them
+	if enabled && !wasEnabled {
+		f.mu.RLock()
+		blockedEmpty := len(f.blocked) == 0
+		hasSources := len(f.sources) > 0
+		f.mu.RUnlock()
+
+		if blockedEmpty && hasSources {
+			f.logger.Info("filter enabled, loading blocklists...")
+			go f.LoadBlocklists()
+		}
+
+		// Start auto-update if not already running
+		if f.updateInterval > 0 {
+			f.startAutoUpdate()
+		}
+	}
 }
 
 // SetSources updates the blocklist source URLs
@@ -497,6 +535,19 @@ func (f *Filter) SetSources(sources []string) {
 	f.mu.Lock()
 	f.sources = sources
 	f.mu.Unlock()
+}
+
+// ReloadIfNeeded triggers blocklist loading if blocklists are empty but sources exist
+func (f *Filter) ReloadIfNeeded() {
+	f.mu.RLock()
+	blockedEmpty := len(f.blocked) == 0
+	hasSources := len(f.sources) > 0
+	f.mu.RUnlock()
+
+	if blockedEmpty && hasSources {
+		f.logger.Info("blocklists empty but sources available, loading...")
+		go f.LoadBlocklists()
+	}
 }
 
 func truncateURL(url string) string {
