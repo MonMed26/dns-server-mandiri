@@ -505,23 +505,34 @@ func (d *Dashboard) handleFilterDebug(w http.ResponseWriter, r *http.Request) {
 
 	blocked, allowed, listSize := d.filter.Stats()
 
-	// Test a known ad domain
-	testDomains := []string{"doubleclick.net", "ads.google.com", "pagead2.googlesyndication.com", "test-blocked.example.com"}
+	// Test known ad/tracking domains
+	testDomains := []string{
+		"doubleclick.net",
+		"ads.google.com",
+		"pagead2.googlesyndication.com",
+		"googleadservices.com",
+		"ad.doubleclick.net",
+		"analytics.google.com",
+		"graph.facebook.com",
+		"ads.facebook.com",
+	}
 	testResults := make(map[string]bool)
 	for _, td := range testDomains {
 		testResults[td] = d.filter.IsBlocked(td)
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"enabled":         d.filter.IsEnabled(),
-		"blocked_map_size": d.filter.BlockedCount(),
-		"blacklist_size":  d.filter.BlacklistCount(),
-		"whitelist":       d.filter.GetWhitelist(),
-		"blacklist":       d.filter.GetBlacklist(),
-		"total_blocked":   blocked,
-		"total_allowed":   allowed,
+		"enabled":            d.filter.IsEnabled(),
+		"blocked_map_size":   d.filter.BlockedCount(),
+		"blacklist_size":     d.filter.BlacklistCount(),
+		"whitelist":          d.filter.GetWhitelist(),
+		"blacklist":          d.filter.GetBlacklist(),
+		"sources":            d.filter.GetSources(),
+		"sample_blocked":     d.filter.SampleBlocked(20),
+		"total_blocked":      blocked,
+		"total_allowed":      allowed,
 		"blocklist_size_stat": listSize,
-		"test_results":    testResults,
+		"test_results":       testResults,
 	})
 }
 

@@ -51,6 +51,7 @@ filter:
     - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
     - "https://adaway.org/hosts.txt"
     - "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0"
+    - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt"
   whitelist_file: ""
   blacklist_file: ""
   update_interval: 24h

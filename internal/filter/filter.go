@@ -29,6 +29,7 @@ var DefaultBlocklistURLs = []string{
 	"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
 	"https://adaway.org/hosts.txt",
 	"https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0",
+	"https://raw.githubusercontent.com/hagezi/dns-blocklists/main/hosts/pro.txt",
 }
 
 // Filter handles DNS-level domain blocking
@@ -136,6 +137,30 @@ func (f *Filter) BlacklistCount() int {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return len(f.blacklist)
+}
+
+// SampleBlocked returns up to N sample domains from the blocked list (for debugging)
+func (f *Filter) SampleBlocked(n int) []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	samples := make([]string, 0, n)
+	for domain := range f.blocked {
+		samples = append(samples, domain)
+		if len(samples) >= n {
+			break
+		}
+	}
+	return samples
+}
+
+// GetSources returns the current blocklist source URLs
+func (f *Filter) GetSources() []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	result := make([]string, len(f.sources))
+	copy(result, f.sources)
+	return result
 }
 
 // IsBlocked checks if a domain should be blocked
@@ -251,11 +276,12 @@ func (f *Filter) loadSource(source string, blocked map[string]struct{}) (int, er
 	var reader io.Reader
 
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		// Download from URL
-		client := &http.Client{Timeout: 30 * time.Second}
+		// Download from URL (large blocklists like StevenBlack can be 40MB+)
+		client := &http.Client{Timeout: 120 * time.Second}
+		f.logger.Info("downloading blocklist", "source", truncateURL(source))
 		resp, err := client.Get(source)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("download failed: %w", err)
 		}
 		defer resp.Body.Close()
 
