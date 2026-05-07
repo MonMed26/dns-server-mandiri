@@ -2,6 +2,7 @@ package cache
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -49,10 +50,10 @@ type Cache struct {
 	cleanupInterval time.Duration
 	stopCleanup     chan struct{}
 
-	// Stats
-	hits   uint64
-	misses uint64
-	evictions uint64
+	// Stats (atomic for lock-free reads)
+	hits      atomic.Uint64
+	misses    atomic.Uint64
+	evictions atomic.Uint64
 }
 
 // New creates a new DNS cache
@@ -86,24 +87,22 @@ func (c *Cache) Get(name string, qtype uint16, qclass uint16) (*dns.Msg, bool, b
 	c.mu.RUnlock()
 
 	if !exists {
-		c.mu.Lock()
-		c.misses++
-		c.mu.Unlock()
+		c.misses.Add(1)
 		return nil, false, false
 	}
 
 	if entry.IsExpired() {
 		c.mu.Lock()
 		delete(c.entries, key)
-		c.misses++
 		c.mu.Unlock()
+		c.misses.Add(1)
 		return nil, false, false
 	}
 
 	c.mu.Lock()
 	entry.HitCount++
-	c.hits++
 	c.mu.Unlock()
+	c.hits.Add(1)
 
 	// Clone the message and adjust TTLs
 	msg := entry.Msg.Copy()
@@ -203,7 +202,7 @@ func (c *Cache) evictOldest() {
 	for key, entry := range c.entries {
 		if entry.IsExpired() {
 			delete(c.entries, key)
-			c.evictions++
+			c.evictions.Add(1)
 			continue
 		}
 		if first || entry.CreatedAt.Before(oldestTime) {
@@ -215,7 +214,7 @@ func (c *Cache) evictOldest() {
 
 	if oldestKey != "" && len(c.entries) >= c.maxSize {
 		delete(c.entries, oldestKey)
-		c.evictions++
+		c.evictions.Add(1)
 	}
 }
 
@@ -242,7 +241,7 @@ func (c *Cache) cleanup() {
 	for key, entry := range c.entries {
 		if entry.IsExpired() {
 			delete(c.entries, key)
-			c.evictions++
+			c.evictions.Add(1)
 		}
 	}
 }
@@ -250,8 +249,9 @@ func (c *Cache) cleanup() {
 // Stats returns cache statistics
 func (c *Cache) Stats() (size int, hits, misses, evictions uint64) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.entries), c.hits, c.misses, c.evictions
+	size = len(c.entries)
+	c.mu.RUnlock()
+	return size, c.hits.Load(), c.misses.Load(), c.evictions.Load()
 }
 
 // Stop stops the cache cleanup goroutine

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,12 @@ import (
 
 	"github.com/miekg/dns"
 )
+
+// BlockedDomainStat tracks how often a domain is blocked
+type BlockedDomainStat struct {
+	Domain string `json:"domain"`
+	Count  uint64 `json:"count"`
+}
 
 // BlockList sources - popular ad/malware/tracking lists
 var DefaultBlocklistURLs = []string{
@@ -41,6 +48,10 @@ type Filter struct {
 	TotalBlocked  atomic.Uint64
 	TotalAllowed  atomic.Uint64
 	BlocklistSize atomic.Int64
+
+	// Top blocked domains tracking
+	blockedCounts   map[string]uint64
+	blockedCountsMu sync.RWMutex
 }
 
 // Config for the filter
@@ -79,6 +90,7 @@ func New(cfg Config, logger *slog.Logger) *Filter {
 		enabled:        cfg.Enabled,
 		updateInterval: cfg.UpdateInterval,
 		stopChan:       make(chan struct{}),
+		blockedCounts:  make(map[string]uint64),
 	}
 
 	if !f.enabled {
@@ -131,12 +143,14 @@ func (f *Filter) IsBlocked(domain string) bool {
 	// Check manual blacklist
 	if _, ok := f.blacklist[domain]; ok {
 		f.TotalBlocked.Add(1)
+		f.recordBlocked(domain)
 		return true
 	}
 
 	// Check blocklist (exact match)
 	if _, ok := f.blocked[domain]; ok {
 		f.TotalBlocked.Add(1)
+		f.recordBlocked(domain)
 		return true
 	}
 
@@ -146,6 +160,7 @@ func (f *Filter) IsBlocked(domain string) bool {
 		parent := strings.Join(parts[i:], ".") + "."
 		if _, ok := f.blocked[parent]; ok {
 			f.TotalBlocked.Add(1)
+			f.recordBlocked(domain)
 			return true
 		}
 	}
@@ -400,6 +415,50 @@ func (f *Filter) GetBlacklist() []string {
 // Stats returns filter statistics
 func (f *Filter) Stats() (blocked, allowed uint64, listSize int64) {
 	return f.TotalBlocked.Load(), f.TotalAllowed.Load(), f.BlocklistSize.Load()
+}
+
+// recordBlocked tracks a blocked domain for top-blocked stats
+func (f *Filter) recordBlocked(domain string) {
+	f.blockedCountsMu.Lock()
+	f.blockedCounts[domain]++
+	// Cap at 10K unique blocked domains to prevent memory leak
+	if len(f.blockedCounts) > 10000 {
+		// Evict lowest count entry
+		var lowestKey string
+		var lowestCount uint64
+		first := true
+		for k, v := range f.blockedCounts {
+			if first || v < lowestCount {
+				lowestKey = k
+				lowestCount = v
+				first = false
+			}
+		}
+		if lowestKey != "" {
+			delete(f.blockedCounts, lowestKey)
+		}
+	}
+	f.blockedCountsMu.Unlock()
+}
+
+// GetTopBlocked returns the most frequently blocked domains
+func (f *Filter) GetTopBlocked(limit int) []BlockedDomainStat {
+	f.blockedCountsMu.RLock()
+	defer f.blockedCountsMu.RUnlock()
+
+	stats := make([]BlockedDomainStat, 0, len(f.blockedCounts))
+	for domain, count := range f.blockedCounts {
+		stats = append(stats, BlockedDomainStat{Domain: domain, Count: count})
+	}
+
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].Count > stats[j].Count
+	})
+
+	if limit > len(stats) {
+		limit = len(stats)
+	}
+	return stats[:limit]
 }
 
 // autoUpdate periodically refreshes blocklists

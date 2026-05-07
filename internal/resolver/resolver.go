@@ -58,8 +58,9 @@ func New(c *cache.Cache, cfg config.ResolverConfig, logger *slog.Logger) *Resolv
 	}
 }
 
-// Resolve performs full recursive resolution for a DNS query
-func (r *Resolver) Resolve(ctx context.Context, name string, qtype uint16, qclass uint16) (*dns.Msg, error) {
+// Resolve performs full recursive resolution for a DNS query.
+// Returns the DNS message, whether it was served from cache, and any error.
+func (r *Resolver) Resolve(ctx context.Context, name string, qtype uint16, qclass uint16) (*dns.Msg, bool, error) {
 	name = dns.Fqdn(name)
 
 	// Check cache first
@@ -68,7 +69,7 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype uint16, qclas
 			// Trigger async prefetch
 			go r.prefetch(name, qtype, qclass)
 		}
-		return msg, nil
+		return msg, true, nil
 	}
 
 	// Deduplicate inflight requests
@@ -80,11 +81,11 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype uint16, qclas
 		select {
 		case <-entry.done:
 			if entry.msg != nil {
-				return entry.msg.Copy(), entry.err
+				return entry.msg.Copy(), false, entry.err
 			}
-			return nil, entry.err
+			return nil, false, entry.err
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 	}
 
@@ -110,7 +111,7 @@ func (r *Resolver) Resolve(ctx context.Context, name string, qtype uint16, qclas
 		r.cache.Set(name, qtype, qclass, msg)
 	}
 
-	return msg, err
+	return msg, false, err
 }
 
 // resolveIterative performs iterative resolution starting from root servers
@@ -397,7 +398,7 @@ func (r *Resolver) PrefetchPopular() {
 
 // ResolveWithType is a helper that resolves and returns specific record types
 func (r *Resolver) ResolveWithType(ctx context.Context, name string, qtype uint16) ([]string, error) {
-	msg, err := r.Resolve(ctx, name, qtype, dns.ClassINET)
+	msg, _, err := r.Resolve(ctx, name, qtype, dns.ClassINET)
 	if err != nil {
 		return nil, err
 	}

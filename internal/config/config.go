@@ -16,18 +16,20 @@ import (
 
 // Config holds all configuration for the DNS server
 type Config struct {
-	Server       ServerConfig          `yaml:"server"`
-	Cache        CacheConfig           `yaml:"cache"`
-	Resolver     ResolverConfig        `yaml:"resolver"`
-	Rate         RateConfig            `yaml:"rate"`
-	Metrics      MetricsConfig         `yaml:"metrics"`
-	Logging      LoggingConfig         `yaml:"logging"`
-	Filter       filter.Config         `yaml:"filter"`
-	Failover     failover.Config       `yaml:"failover"`
-	Persistence  persistence.Config    `yaml:"persistence"`
-	LocalRecords localrecords.Config   `yaml:"local_records"`
-	ClientStats  ClientStatsConfig     `yaml:"client_stats"`
-	ECS          ecs.Config            `yaml:"ecs"`
+	Server        ServerConfig          `yaml:"server"`
+	Cache         CacheConfig           `yaml:"cache"`
+	Resolver      ResolverConfig        `yaml:"resolver"`
+	Rate          RateConfig            `yaml:"rate"`
+	Metrics       MetricsConfig         `yaml:"metrics"`
+	Logging       LoggingConfig         `yaml:"logging"`
+	Filter        filter.Config         `yaml:"filter"`
+	Failover      failover.Config       `yaml:"failover"`
+	Persistence   persistence.Config    `yaml:"persistence"`
+	LocalRecords  localrecords.Config   `yaml:"local_records"`
+	ClientStats   ClientStatsConfig     `yaml:"client_stats"`
+	ECS           ecs.Config            `yaml:"ecs"`
+	DashboardAuth DashboardAuthConfig   `yaml:"dashboard_auth"`
+	CacheWarmup   CacheWarmupConfig     `yaml:"cache_warmup"`
 }
 
 type ServerConfig struct {
@@ -67,6 +69,17 @@ type MetricsConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	ListenAddr string `yaml:"listen_addr"`
 	Port       int    `yaml:"port"`
+}
+
+type DashboardAuthConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type CacheWarmupConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Domains []string `yaml:"domains"`
 }
 
 type LoggingConfig struct {
@@ -134,6 +147,23 @@ func DefaultConfig() *Config {
 			MaxClients: 10000,
 		},
 		ECS: ecs.DefaultECSConfig(),
+		DashboardAuth: DashboardAuthConfig{
+			Enabled:  false,
+			Username: "admin",
+			Password: "admin",
+		},
+		CacheWarmup: CacheWarmupConfig{
+			Enabled: true,
+			Domains: []string{
+				"google.com", "www.google.com", "youtube.com", "www.youtube.com",
+				"facebook.com", "www.facebook.com", "instagram.com", "www.instagram.com",
+				"tiktok.com", "www.tiktok.com", "whatsapp.com", "web.whatsapp.com",
+				"twitter.com", "x.com", "github.com", "cloudflare.com",
+				"tokopedia.com", "shopee.co.id", "bukalapak.com", "gojek.com",
+				"grab.com", "dana.id", "ovo.id", "bca.co.id",
+				"detik.com", "kompas.com", "tribunnews.com", "liputan6.com",
+			},
+		},
 	}
 }
 

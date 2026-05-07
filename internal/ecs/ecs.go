@@ -118,30 +118,34 @@ func (h *Handler) IsEnabled() bool {
 	return h.cfg.Enabled
 }
 
+// privateRanges is parsed once at package init to avoid per-query allocations
+var privateRanges []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"fc00::/7",
+		"fe80::/10",
+		"::1/128",
+	}
+	for _, cidr := range cidrs {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network != nil {
+			privateRanges = append(privateRanges, network)
+		}
+	}
+}
+
 // isPrivateIP checks if an IP is private/local
 func isPrivateIP(ip net.IP) bool {
-	privateRanges := []struct {
-		network *net.IPNet
-	}{
-		{parseCIDR("10.0.0.0/8")},
-		{parseCIDR("172.16.0.0/12")},
-		{parseCIDR("192.168.0.0/16")},
-		{parseCIDR("127.0.0.0/8")},
-		{parseCIDR("169.254.0.0/16")},
-		{parseCIDR("fc00::/7")},
-		{parseCIDR("fe80::/10")},
-		{parseCIDR("::1/128")},
-	}
-
-	for _, r := range privateRanges {
-		if r.network.Contains(ip) {
+	for _, network := range privateRanges {
+		if network.Contains(ip) {
 			return true
 		}
 	}
 	return false
-}
-
-func parseCIDR(s string) *net.IPNet {
-	_, network, _ := net.ParseCIDR(s)
-	return network
 }

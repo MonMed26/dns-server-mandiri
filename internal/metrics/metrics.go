@@ -55,14 +55,17 @@ type Metrics struct {
 	TotalLatencyNs atomic.Int64
 	QueryCount     atomic.Int64
 
-	// Query log (ring buffer)
+	// Query log (proper circular ring buffer)
 	queryLog    []QueryLog
 	queryLogMu  sync.RWMutex
 	queryLogMax int
+	queryLogIdx int  // current write position in ring buffer
+	queryLogLen int  // number of entries written (up to queryLogMax)
 
-	// Top domains tracking
-	domainCounts   map[string]*domainCounter
-	domainCountsMu sync.RWMutex
+	// Top domains tracking (capped to prevent memory leak)
+	domainCounts    map[string]*domainCounter
+	domainCountsMu  sync.RWMutex
+	domainCountsMax int
 
 	// QPS history (for charts)
 	qpsHistory   []QPSPoint
@@ -88,13 +91,16 @@ type domainCounter struct {
 // New creates a new metrics instance
 func New() *Metrics {
 	m := &Metrics{
-		startTime:    time.Now(),
-		queryLogMax:  500, // Keep last 500 queries
-		queryLog:     make([]QueryLog, 0, 500),
-		domainCounts: make(map[string]*domainCounter),
-		qpsHistory:   make([]QPSPoint, 0, 360), // 3 hours at 30s intervals
-		lastQPSTime:  time.Now(),
-		stopChan:     make(chan struct{}),
+		startTime:       time.Now(),
+		queryLogMax:     500, // Keep last 500 queries
+		queryLog:        make([]QueryLog, 500), // pre-allocate fixed-size ring buffer
+		queryLogIdx:     0,
+		queryLogLen:     0,
+		domainCounts:    make(map[string]*domainCounter),
+		domainCountsMax: 10000, // cap at 10K domains to prevent memory leak
+		qpsHistory:      make([]QPSPoint, 0, 360), // 3 hours at 30s intervals
+		lastQPSTime:     time.Now(),
+		stopChan:        make(chan struct{}),
 	}
 
 	// Start QPS tracking goroutine
@@ -164,18 +170,23 @@ func (m *Metrics) RecordQueryDetail(clientIP, domain, queryType, rcode, protocol
 		Protocol:   protocol,
 	}
 
-	// Add to ring buffer
+	// Add to proper circular ring buffer (O(1) insert, no slice shifting)
 	m.queryLogMu.Lock()
-	if len(m.queryLog) >= m.queryLogMax {
-		m.queryLog = m.queryLog[1:]
+	m.queryLog[m.queryLogIdx] = entry
+	m.queryLogIdx = (m.queryLogIdx + 1) % m.queryLogMax
+	if m.queryLogLen < m.queryLogMax {
+		m.queryLogLen++
 	}
-	m.queryLog = append(m.queryLog, entry)
 	m.queryLogMu.Unlock()
 
-	// Track domain counts
+	// Track domain counts (capped to prevent unbounded memory growth)
 	m.domainCountsMu.Lock()
 	dc, exists := m.domainCounts[domain]
 	if !exists {
+		if len(m.domainCounts) >= m.domainCountsMax {
+			// Evict the domain with the lowest count
+			m.evictLowestDomain()
+		}
 		dc = &domainCounter{}
 		m.domainCounts[domain] = dc
 	}
@@ -189,20 +200,30 @@ func (m *Metrics) GetRecentQueries(limit int) []QueryLog {
 	m.queryLogMu.RLock()
 	defer m.queryLogMu.RUnlock()
 
-	if limit <= 0 || limit > len(m.queryLog) {
-		limit = len(m.queryLog)
+	if limit <= 0 || limit > m.queryLogLen {
+		limit = m.queryLogLen
 	}
 
-	// Return most recent entries
-	start := len(m.queryLog) - limit
 	result := make([]QueryLog, limit)
-	copy(result, m.queryLog[start:])
-
-	// Reverse so newest is first
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
+	// Read from ring buffer in reverse order (newest first)
+	for i := 0; i < limit; i++ {
+		idx := (m.queryLogIdx - 1 - i + m.queryLogMax) % m.queryLogMax
+		result[i] = m.queryLog[idx]
 	}
 
+	return result
+}
+
+// GetAllQueryLogs returns all query logs (for export), oldest first
+func (m *Metrics) GetAllQueryLogs() []QueryLog {
+	m.queryLogMu.RLock()
+	defer m.queryLogMu.RUnlock()
+
+	result := make([]QueryLog, m.queryLogLen)
+	for i := 0; i < m.queryLogLen; i++ {
+		idx := (m.queryLogIdx - m.queryLogLen + i + m.queryLogMax) % m.queryLogMax
+		result[i] = m.queryLog[idx]
+	}
 	return result
 }
 
@@ -377,6 +398,26 @@ func (m *Metrics) GetSnapshot() Snapshot {
 		AvgLatencyMs:   avgLatency,
 		QPS:            qps,
 		ActiveClients:  activeClients,
+	}
+}
+
+// evictLowestDomain removes the domain with the lowest query count.
+// Must be called with domainCountsMu held.
+func (m *Metrics) evictLowestDomain() {
+	var lowestKey string
+	var lowestCount uint64
+	first := true
+
+	for key, dc := range m.domainCounts {
+		if first || dc.count < lowestCount {
+			lowestKey = key
+			lowestCount = dc.count
+			first = false
+		}
+	}
+
+	if lowestKey != "" {
+		delete(m.domainCounts, lowestKey)
 	}
 }
 

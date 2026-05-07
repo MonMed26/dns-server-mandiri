@@ -1,19 +1,24 @@
 package dashboard
 
 import (
+	"crypto/subtle"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"dns-server-mandiri/internal/clientstats"
+	"dns-server-mandiri/internal/config"
 	"dns-server-mandiri/internal/database"
 	"dns-server-mandiri/internal/failover"
 	"dns-server-mandiri/internal/filter"
 	"dns-server-mandiri/internal/localrecords"
 	"dns-server-mandiri/internal/metrics"
+	"dns-server-mandiri/internal/ratelimit"
 )
 
 //go:embed static/*
@@ -26,8 +31,10 @@ type Dashboard struct {
 	localRecords *localrecords.LocalRecords
 	clientStats  *clientstats.Tracker
 	failover     *failover.Failover
+	limiter      *ratelimit.Limiter
 	db           *database.DB
 	logger       *slog.Logger
+	authCfg      config.DashboardAuthConfig
 }
 
 // helper for admin_api to create local record
@@ -63,46 +70,100 @@ func (d *Dashboard) SetFailover(f *failover.Failover) {
 	d.failover = f
 }
 
+// SetLimiter sets the rate limiter reference
+func (d *Dashboard) SetLimiter(l *ratelimit.Limiter) {
+	d.limiter = l
+}
+
+// SetAuth sets the dashboard authentication config
+func (d *Dashboard) SetAuth(cfg config.DashboardAuthConfig) {
+	d.authCfg = cfg
+}
+
+// basicAuth is a middleware that enforces HTTP Basic Authentication
+func (d *Dashboard) basicAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.authCfg.Enabled {
+			next(w, r)
+			return
+		}
+
+		user, pass, ok := r.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(user), []byte(d.authCfg.Username)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(pass), []byte(d.authCfg.Password)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="DNS Server Mandiri"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 // Handler returns the HTTP handler for the dashboard
 func (d *Dashboard) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Core API endpoints
-	mux.HandleFunc("/api/stats", d.handleStats)
-	mux.HandleFunc("/api/queries", d.handleQueries)
-	mux.HandleFunc("/api/top-domains", d.handleTopDomains)
-	mux.HandleFunc("/api/qps-history", d.handleQPSHistory)
-	mux.HandleFunc("/api/latency-histogram", d.handleLatencyHistogram)
+	// Core API endpoints (protected)
+	mux.HandleFunc("/api/stats", d.basicAuth(d.handleStats))
+	mux.HandleFunc("/api/queries", d.basicAuth(d.handleQueries))
+	mux.HandleFunc("/api/queries/export", d.basicAuth(d.handleQueriesExport))
+	mux.HandleFunc("/api/top-domains", d.basicAuth(d.handleTopDomains))
+	mux.HandleFunc("/api/qps-history", d.basicAuth(d.handleQPSHistory))
+	mux.HandleFunc("/api/latency-histogram", d.basicAuth(d.handleLatencyHistogram))
 
-	// Filter API endpoints
-	mux.HandleFunc("/api/filter/stats", d.handleFilterStats)
-	mux.HandleFunc("/api/filter/whitelist", d.handleFilterWhitelist)
-	mux.HandleFunc("/api/filter/blacklist", d.handleFilterBlacklist)
-	mux.HandleFunc("/api/filter/toggle", d.handleFilterToggle)
-	mux.HandleFunc("/api/filter/reload", d.handleFilterReload)
+	// Filter API endpoints (protected)
+	mux.HandleFunc("/api/filter/stats", d.basicAuth(d.handleFilterStats))
+	mux.HandleFunc("/api/filter/whitelist", d.basicAuth(d.handleFilterWhitelist))
+	mux.HandleFunc("/api/filter/blacklist", d.basicAuth(d.handleFilterBlacklist))
+	mux.HandleFunc("/api/filter/toggle", d.basicAuth(d.handleFilterToggle))
+	mux.HandleFunc("/api/filter/reload", d.basicAuth(d.handleFilterReload))
+	mux.HandleFunc("/api/filter/top-blocked", d.basicAuth(d.handleTopBlocked))
 
-	// Local records API
-	mux.HandleFunc("/api/local-records", d.handleLocalRecords)
+	// Local records API (protected)
+	mux.HandleFunc("/api/local-records", d.basicAuth(d.handleLocalRecords))
 
-	// Client stats API
-	mux.HandleFunc("/api/clients", d.handleClients)
+	// Client stats API (protected)
+	mux.HandleFunc("/api/clients", d.basicAuth(d.handleClients))
 
-	// Failover API
-	mux.HandleFunc("/api/failover/status", d.handleFailoverStatus)
+	// Failover API (protected)
+	mux.HandleFunc("/api/failover/status", d.basicAuth(d.handleFailoverStatus))
+	mux.HandleFunc("/api/failover/latency", d.basicAuth(d.handleFailoverLatency))
 
-	// Admin API (SQLite-backed)
+	// Rate limit stats API (protected)
+	mux.HandleFunc("/api/ratelimit/stats", d.basicAuth(d.handleRateLimitStats))
+
+	// Admin API (SQLite-backed, protected)
 	d.registerAdminRoutes(mux)
 
-	// Health
+	// Health (unprotected - for monitoring)
 	mux.HandleFunc("/health", d.handleHealth)
 
-	// Serve embedded static files
-	mux.Handle("/static/", http.FileServer(http.FS(staticFiles)))
+	// Serve embedded static files (protected)
+	mux.Handle("/static/", d.basicAuthHandler(http.FileServer(http.FS(staticFiles))))
 
-	// Serve index.html at root
-	mux.HandleFunc("/", d.handleIndex)
+	// Serve index.html at root (protected)
+	mux.HandleFunc("/", d.basicAuth(d.handleIndex))
 
 	return mux
+}
+
+// basicAuthHandler wraps an http.Handler with basic auth
+func (d *Dashboard) basicAuthHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if d.authCfg.Enabled {
+			user, pass, ok := r.BasicAuth()
+			if !ok ||
+				subtle.ConstantTimeCompare([]byte(user), []byte(d.authCfg.Username)) != 1 ||
+				subtle.ConstantTimeCompare([]byte(pass), []byte(d.authCfg.Password)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="DNS Server Mandiri"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Serve starts the dashboard HTTP server
@@ -416,4 +477,98 @@ func (d *Dashboard) handleFailoverStatus(w http.ResponseWriter, r *http.Request)
 func (d *Dashboard) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleQueriesExport exports query logs as CSV or JSON
+func (d *Dashboard) handleQueriesExport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+
+	logs := d.metrics.GetAllQueryLogs()
+
+	switch format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=dns-queries-"+time.Now().Format("20060102-150405")+".csv")
+		writer := csv.NewWriter(w)
+		writer.Write([]string{"timestamp", "client_ip", "domain", "query_type", "rcode", "latency_ms", "cached", "protocol"})
+		for _, q := range logs {
+			cached := "false"
+			if q.Cached {
+				cached = "true"
+			}
+			writer.Write([]string{
+				q.Timestamp.Format(time.RFC3339),
+				q.ClientIP,
+				q.Domain,
+				q.QueryType,
+				q.Rcode,
+				fmt.Sprintf("%.2f", q.LatencyMs),
+				cached,
+				q.Protocol,
+			})
+		}
+		writer.Flush()
+
+	default: // json
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=dns-queries-"+time.Now().Format("20060102-150405")+".json")
+		json.NewEncoder(w).Encode(logs)
+	}
+}
+
+// handleTopBlocked returns the most frequently blocked domains
+func (d *Dashboard) handleTopBlocked(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if d.filter == nil {
+		json.NewEncoder(w).Encode([]struct{}{})
+		return
+	}
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	topBlocked := d.filter.GetTopBlocked(limit)
+	json.NewEncoder(w).Encode(topBlocked)
+}
+
+// handleFailoverLatency returns latency stats for upstream DNS servers
+func (d *Dashboard) handleFailoverLatency(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if d.failover == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+		return
+	}
+
+	json.NewEncoder(w).Encode(d.failover.GetLatencyStats())
+}
+
+// handleRateLimitStats returns rate limiting statistics
+func (d *Dashboard) handleRateLimitStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if d.limiter == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"enabled": false})
+		return
+	}
+
+	stats := d.limiter.GetAllStats()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":        true,
+		"active_clients": len(stats),
+		"clients":        stats,
+	})
 }

@@ -139,7 +139,7 @@
             <div class="panel"><div class="panel-header"><h2>Queries Per Second</h2><span style="font-size:0.7rem;color:var(--text-secondary)">Last 30 min</span></div><div class="chart-container"><div class="qps-chart" id="qps-chart"></div></div></div>
             <div class="panel"><div class="panel-header"><h2>Latency Distribution</h2></div><div class="chart-container"><div class="histogram" id="latency-histogram"></div></div></div>
             <div class="panel"><div class="panel-header"><h2>Top Domains</h2></div><div class="panel-body"><ul class="domain-list" id="top-domains"></ul></div></div>
-            <div class="panel"><div class="panel-header"><h2>Failover Status</h2></div><div class="panel-body" id="failover-status"></div></div>
+            <div class="panel"><div class="panel-header"><h2>Failover Status & Latency</h2></div><div class="panel-body" id="failover-status"></div></div>
         </div>
     </div>
     </div>
@@ -167,6 +167,10 @@
                     <div class="form-row"><input class="form-input" id="blacklist-input" placeholder="domain.com"><button class="btn btn-danger btn-sm" onclick="addBlacklist()">Block</button></div>
                     <ul class="domain-list" id="blacklist-items"></ul>
                 </div>
+            </div>
+            <div class="panel full-panel">
+                <div class="panel-header"><h2>Top Blocked Domains</h2><span style="font-size:0.7rem;color:var(--text-secondary)">Most frequently blocked</span></div>
+                <div class="panel-body"><ul class="domain-list" id="top-blocked-list"></ul></div>
             </div>
         </div>
     </div>
@@ -207,7 +211,13 @@
     <div class="tab-content" id="tab-queries">
     <div class="container">
         <div class="panel full-panel">
-            <div class="panel-header"><h2>Recent Queries</h2><span style="font-size:0.7rem;color:var(--text-secondary)">Last 100</span></div>
+            <div class="panel-header"><h2>Recent Queries</h2>
+                <div style="display:flex;gap:0.5rem;align-items:center">
+                    <span style="font-size:0.7rem;color:var(--text-secondary)">Last 100</span>
+                    <button class="btn btn-primary btn-sm" onclick="exportQueries('csv')">Export CSV</button>
+                    <button class="btn btn-sm" style="background:var(--accent-purple);color:#fff" onclick="exportQueries('json')">Export JSON</button>
+                </div>
+            </div>
             <div class="panel-body" style="max-height:700px">
                 <table class="query-table"><thead><tr><th>Time</th><th>Client</th><th>Domain</th><th>Type</th><th>Status</th><th>Latency</th><th>Cache</th></tr></thead><tbody id="recent-queries"></tbody></table>
             </div>
@@ -325,12 +335,21 @@
 
     async function fetchFailover() {
         try {
-            const r = await fetch('/api/failover/status'); const d = await r.json();
+            const [statusRes, latencyRes] = await Promise.all([
+                fetch('/api/failover/status'),
+                fetch('/api/failover/latency')
+            ]);
+            const d = await statusRes.json();
+            let latencyData = {};
+            try { latencyData = await latencyRes.json(); } catch(e) {}
             const el = document.getElementById('failover-status');
             if(!d.enabled){el.innerHTML='<p style="color:var(--text-secondary)">Failover disabled</p>';return;}
-            let html='<table class="query-table"><thead><tr><th>Upstream</th><th>Status</th></tr></thead><tbody>';
+            let html='<table class="query-table"><thead><tr><th>Upstream</th><th>Status</th><th>Avg Latency</th><th>Last Latency</th></tr></thead><tbody>';
             for(const[ip,healthy] of Object.entries(d.upstreams||{})){
-                html+=`<tr><td><code>${ip}</code></td><td><span class="badge ${healthy?'badge-success':'badge-error'}">${healthy?'HEALTHY':'DOWN'}</span></td></tr>`;
+                const lat = latencyData[ip] || {};
+                const avgLat = lat.avg_latency_ms ? lat.avg_latency_ms.toFixed(1)+'ms' : '-';
+                const lastLat = lat.last_latency_ms ? lat.last_latency_ms.toFixed(1)+'ms' : '-';
+                html+=`<tr><td><code>${ip}</code></td><td><span class="badge ${healthy?'badge-success':'badge-error'}">${healthy?'HEALTHY':'DOWN'}</span></td><td>${avgLat}</td><td>${lastLat}</td></tr>`;
             }
             html+='</tbody></table>';
             el.innerHTML=html;
@@ -501,9 +520,23 @@
         await fetch('/api/admin/upstreams/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,enabled})});
     }
 
+    async function fetchTopBlocked() {
+        try {
+            const r = await fetch('/api/filter/top-blocked?limit=20'); const d = await r.json();
+            const el = document.getElementById('top-blocked-list');
+            if(!d||!d.length){el.innerHTML='<li class="domain-item"><span class="domain-name" style="color:var(--text-secondary)">No blocked domains yet</span></li>';return;}
+            const max=d[0].count;
+            el.innerHTML=d.map(x=>`<li class="domain-item"><div style="flex:1"><div style="display:flex;justify-content:space-between"><span class="domain-name">${x.domain}</span><span class="domain-count" style="color:var(--accent-red)">${fmt(x.count)}</span></div><div class="domain-bar" style="width:${(x.count/max)*100}%;background:var(--accent-red)"></div></div></li>`).join('');
+        } catch(e) {}
+    }
+
+    function exportQueries(format) {
+        window.open('/api/queries/export?format='+format, '_blank');
+    }
+
     // Refresh
     async function refreshAll() {
-        await Promise.all([fetchStats(),fetchQPS(),fetchHistogram(),fetchTopDomains(),fetchQueries(),fetchFailover(),fetchFilterStats(),fetchWhitelist(),fetchBlacklist(),fetchClients(),fetchRecords(),fetchSources(),fetchUpstreams()]);
+        await Promise.all([fetchStats(),fetchQPS(),fetchHistogram(),fetchTopDomains(),fetchQueries(),fetchFailover(),fetchFilterStats(),fetchWhitelist(),fetchBlacklist(),fetchClients(),fetchRecords(),fetchSources(),fetchUpstreams(),fetchTopBlocked()]);
     }
     refreshAll();
     setInterval(refreshAll, REFRESH);

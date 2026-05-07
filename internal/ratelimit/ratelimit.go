@@ -118,3 +118,28 @@ func (l *Limiter) ActiveClients() int {
 	defer l.mu.Unlock()
 	return len(l.buckets)
 }
+
+// ClientRateStat represents rate limit stats for a single client
+type ClientRateStat struct {
+	IP      string  `json:"ip"`
+	Blocked int     `json:"blocked_count"`
+	Tokens  float64 `json:"tokens_remaining"`
+}
+
+// GetAllStats returns rate limit statistics for all active clients
+func (l *Limiter) GetAllStats() []ClientRateStat {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	stats := make([]ClientRateStat, 0, len(l.buckets))
+	for ip, b := range l.buckets {
+		if b.blocked > 0 {
+			stats = append(stats, ClientRateStat{
+				IP:      ip,
+				Blocked: b.blocked,
+				Tokens:  b.tokens,
+			})
+		}
+	}
+	return stats
+}

@@ -13,29 +13,29 @@ func (d *Dashboard) SetDatabase(db *database.DB) {
 	d.db = db
 }
 
-// registerAdminRoutes registers all admin API routes
+// registerAdminRoutes registers all admin API routes (protected by auth)
 func (d *Dashboard) registerAdminRoutes(mux *http.ServeMux) {
 	// Settings
-	mux.HandleFunc("/api/admin/settings", d.handleAdminSettings)
+	mux.HandleFunc("/api/admin/settings", d.basicAuth(d.handleAdminSettings))
 
 	// Blocklist sources
-	mux.HandleFunc("/api/admin/blocklist-sources", d.handleAdminBlocklistSources)
-	mux.HandleFunc("/api/admin/blocklist-sources/toggle", d.handleAdminBlocklistToggle)
-	mux.HandleFunc("/api/admin/blocklist-sources/reload", d.handleAdminBlocklistReload)
+	mux.HandleFunc("/api/admin/blocklist-sources", d.basicAuth(d.handleAdminBlocklistSources))
+	mux.HandleFunc("/api/admin/blocklist-sources/toggle", d.basicAuth(d.handleAdminBlocklistToggle))
+	mux.HandleFunc("/api/admin/blocklist-sources/reload", d.basicAuth(d.handleAdminBlocklistReload))
 
 	// Whitelist
-	mux.HandleFunc("/api/admin/whitelist", d.handleAdminWhitelist)
+	mux.HandleFunc("/api/admin/whitelist", d.basicAuth(d.handleAdminWhitelist))
 
 	// Blacklist
-	mux.HandleFunc("/api/admin/blacklist", d.handleAdminBlacklist)
+	mux.HandleFunc("/api/admin/blacklist", d.basicAuth(d.handleAdminBlacklist))
 
 	// Local records
-	mux.HandleFunc("/api/admin/local-records", d.handleAdminLocalRecords)
-	mux.HandleFunc("/api/admin/local-records/toggle", d.handleAdminLocalRecordToggle)
+	mux.HandleFunc("/api/admin/local-records", d.basicAuth(d.handleAdminLocalRecords))
+	mux.HandleFunc("/api/admin/local-records/toggle", d.basicAuth(d.handleAdminLocalRecordToggle))
 
 	// Failover upstreams
-	mux.HandleFunc("/api/admin/upstreams", d.handleAdminUpstreams)
-	mux.HandleFunc("/api/admin/upstreams/toggle", d.handleAdminUpstreamToggle)
+	mux.HandleFunc("/api/admin/upstreams", d.basicAuth(d.handleAdminUpstreams))
+	mux.HandleFunc("/api/admin/upstreams/toggle", d.basicAuth(d.handleAdminUpstreamToggle))
 }
 
 // === Settings ===

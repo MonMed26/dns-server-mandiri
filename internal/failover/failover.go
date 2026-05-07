@@ -37,6 +37,20 @@ type Failover struct {
 	mu       sync.RWMutex
 	healthy  map[string]bool
 	lastCheck map[string]time.Time
+
+	// Latency tracking per upstream
+	latencyMu    sync.RWMutex
+	latencyStats map[string]*UpstreamLatency
+
+	stopChan chan struct{}
+}
+
+// UpstreamLatency tracks response time statistics for an upstream
+type UpstreamLatency struct {
+	TotalLatencyNs int64   `json:"-"`
+	QueryCount     int64   `json:"-"`
+	AvgLatencyMs   float64 `json:"avg_latency_ms"`
+	LastLatencyMs  float64 `json:"last_latency_ms"`
 }
 
 // New creates a new failover handler
@@ -47,9 +61,11 @@ func New(cfg Config, logger *slog.Logger) *Failover {
 			Net:     "udp",
 			Timeout: cfg.Timeout,
 		},
-		logger:    logger,
-		healthy:   make(map[string]bool),
-		lastCheck: make(map[string]time.Time),
+		logger:       logger,
+		healthy:      make(map[string]bool),
+		lastCheck:    make(map[string]time.Time),
+		latencyStats: make(map[string]*UpstreamLatency),
+		stopChan:     make(chan struct{}),
 	}
 
 	// Mark all upstreams as healthy initially
@@ -87,13 +103,16 @@ func (f *Failover) Resolve(ctx context.Context, name string, qtype uint16) (*dns
 
 		addr := upstream + ":53"
 		for retry := 0; retry <= f.cfg.MaxRetries; retry++ {
+			queryStart := time.Now()
 			resp, _, err := f.client.ExchangeContext(ctx, msg, addr)
+			latency := time.Since(queryStart)
 			if err != nil {
 				continue
 			}
 
 			if resp != nil && resp.Rcode != dns.RcodeServerFailure {
 				f.markHealthy(upstream)
+				f.recordLatency(upstream, latency)
 				return resp, nil
 			}
 		}
@@ -144,8 +163,46 @@ func (f *Failover) healthCheckLoop() {
 		select {
 		case <-ticker.C:
 			f.checkUnhealthy()
+		case <-f.stopChan:
+			return
 		}
 	}
+}
+
+// Stop stops the failover health check goroutine
+func (f *Failover) Stop() {
+	close(f.stopChan)
+}
+
+// recordLatency records response latency for an upstream
+func (f *Failover) recordLatency(upstream string, latency time.Duration) {
+	f.latencyMu.Lock()
+	defer f.latencyMu.Unlock()
+
+	stats, exists := f.latencyStats[upstream]
+	if !exists {
+		stats = &UpstreamLatency{}
+		f.latencyStats[upstream] = stats
+	}
+
+	stats.TotalLatencyNs += int64(latency)
+	stats.QueryCount++
+	stats.LastLatencyMs = float64(latency.Microseconds()) / 1000.0
+	if stats.QueryCount > 0 {
+		stats.AvgLatencyMs = float64(stats.TotalLatencyNs) / float64(stats.QueryCount) / 1e6
+	}
+}
+
+// GetLatencyStats returns latency statistics for all upstreams
+func (f *Failover) GetLatencyStats() map[string]UpstreamLatency {
+	f.latencyMu.RLock()
+	defer f.latencyMu.RUnlock()
+
+	result := make(map[string]UpstreamLatency)
+	for k, v := range f.latencyStats {
+		result[k] = *v
+	}
+	return result
 }
 
 func (f *Failover) checkUnhealthy() {

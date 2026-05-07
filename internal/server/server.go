@@ -131,6 +131,10 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	dash.SetLocalRecords(lr)
 	dash.SetClientStats(cs)
 	dash.SetFailover(dnsFailover)
+	dash.SetAuth(cfg.DashboardAuth)
+	if limiter != nil {
+		dash.SetLimiter(limiter)
+	}
 	if db != nil {
 		dash.SetDatabase(db)
 	}
@@ -222,6 +226,11 @@ func (s *Server) Start() error {
 	// Start prefetch loop
 	go s.prefetchLoop()
 
+	// Cache warm-up: pre-resolve popular domains in background
+	if s.cfg.CacheWarmup.Enabled && len(s.cfg.CacheWarmup.Domains) > 0 {
+		go s.warmupCache()
+	}
+
 	// Log features status
 	s.logger.Info("features status",
 		"filter", s.filter.IsEnabled(),
@@ -269,6 +278,9 @@ func (s *Server) Shutdown() {
 	}
 	if s.limiter != nil {
 		s.limiter.Stop()
+	}
+	if s.failover != nil {
+		s.failover.Stop()
 	}
 	if s.filter != nil {
 		s.filter.Stop()
@@ -351,16 +363,13 @@ func (s *Server) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	// Step 3: Check cache (for metrics tracking)
-	_, cached, _ := s.cache.Get(q.Name, q.Qtype, q.Qclass)
-
-	// Step 4: Resolve via recursive resolver
+	// Step 3: Resolve via recursive resolver (includes cache check internally)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp, err := s.resolver.Resolve(ctx, q.Name, q.Qtype, q.Qclass)
+	resp, cached, err := s.resolver.Resolve(ctx, q.Name, q.Qtype, q.Qclass)
 
-	// Step 5: If recursive fails, try failover
+	// Step 4: If recursive fails, try failover
 	if err != nil && s.failover.IsEnabled() {
 		failoverResp, failoverErr := s.failover.Resolve(ctx, q.Name, q.Qtype)
 		if failoverErr == nil && failoverResp != nil {
@@ -443,6 +452,29 @@ func (s *Server) prefetchLoop() {
 			return
 		}
 	}
+}
+
+// warmupCache pre-resolves popular domains to fill the cache after startup
+func (s *Server) warmupCache() {
+	s.logger.Info("cache warm-up starting", "domains", len(s.cfg.CacheWarmup.Domains))
+	resolved := 0
+
+	for _, domain := range s.cfg.CacheWarmup.Domains {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+		// Resolve A record
+		_, _, err := s.resolver.Resolve(ctx, domain, dns.TypeA, dns.ClassINET)
+		if err == nil {
+			resolved++
+		}
+
+		// Also resolve AAAA
+		s.resolver.Resolve(ctx, domain, dns.TypeAAAA, dns.ClassINET)
+
+		cancel()
+	}
+
+	s.logger.Info("cache warm-up completed", "resolved", resolved, "total", len(s.cfg.CacheWarmup.Domains))
 }
 
 // GetMetrics returns the metrics instance

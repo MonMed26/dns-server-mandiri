@@ -94,3 +94,44 @@ ecs:
   enabled: true
   subnet_ipv4: 24
   subnet_ipv6: 56
+
+# Dashboard authentication (Basic Auth)
+# Enable this to protect the dashboard from unauthorized access
+dashboard_auth:
+  enabled: false
+  username: "admin"
+  password: "admin"  # Change this in production!
+
+# Cache warm-up (pre-resolve popular domains on startup)
+# Reduces latency spike after restart for 300+ hotspot users
+cache_warmup:
+  enabled: true
+  domains:
+    - "google.com"
+    - "www.google.com"
+    - "youtube.com"
+    - "www.youtube.com"
+    - "facebook.com"
+    - "www.facebook.com"
+    - "instagram.com"
+    - "www.instagram.com"
+    - "tiktok.com"
+    - "www.tiktok.com"
+    - "whatsapp.com"
+    - "web.whatsapp.com"
+    - "twitter.com"
+    - "x.com"
+    - "github.com"
+    - "cloudflare.com"
+    - "tokopedia.com"
+    - "shopee.co.id"
+    - "bukalapak.com"
+    - "gojek.com"
+    - "grab.com"
+    - "dana.id"
+    - "ovo.id"
+    - "bca.co.id"
+    - "detik.com"
+    - "kompas.com"
+    - "tribunnews.com"
+    - "liputan6.com"
